@@ -1,0 +1,29 @@
+{
+  "identifier": "app.cinehub.desktop",
+  "app": {
+    "windows": [
+      {
+        "title": "CineHub",
+        "width": 800,
+        "height": 600,
+        "transparent": true,
+        "decorations": false
+      }
+    ]
+  },
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "resources": [
+      "resources/ffmpeg-sidecar/*",
+      "lib/*.dll",
+      "resources/windows/vc_redist.exe"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import {mainStorage} from './StorageService';
 import {sourceTokenStorage} from './sourceTokenStorage';
+import type {ProviderIntegrity} from '../services/providerIntegrity';
 
 /**
  * Provider Source
@@ -25,11 +26,13 @@ export interface ProviderExtension {
   disabled: boolean;
   type: 'global' | 'english' | 'india' | 'italy' | 'anime' | 'drama';
   installed: boolean;
+  installedAt?: number;
+  lastUpdated?: number;
   hasSettings?: boolean;
   /** Folder of the provider's files under the source; dist/{value} if unset. */
   path?: string;
-  installedAt?: number;
-  lastUpdated?: number;
+  /** Optional SHA-256 module digests published in the source manifest. */
+  integrity?: ProviderIntegrity;
 }
 
 /**
@@ -66,27 +69,6 @@ export enum ExtensionKeys {
  * Extension storage manager
  */
 export class ExtensionStorage {
-  private modulesRevision: number | undefined;
-  private readonly modulesByProvider = new Map<string, ProviderModule[]>();
-
-  private getIndexedModules(providerValue: string): ProviderModule[] {
-    const revision = mainStorage.getRevision?.(ExtensionKeys.PROVIDER_MODULES);
-    // Unknown storage implementations retain their original read semantics.
-    if (revision === undefined || revision !== this.modulesRevision) {
-      this.modulesByProvider.clear();
-      const modules =
-        mainStorage.getArray<ProviderModule>(ExtensionKeys.PROVIDER_MODULES) ||
-        [];
-      for (const module of modules) {
-        const matches = this.modulesByProvider.get(module.value);
-        if (matches) matches.push(module);
-        else this.modulesByProvider.set(module.value, [module]);
-      }
-      this.modulesRevision = revision;
-    }
-    return this.modulesByProvider.get(providerValue) || [];
-  }
-
   private normalizeUrl(url: string): string {
     return url.trim().replace(/\/+$/, '');
   }
@@ -288,9 +270,9 @@ export class ExtensionStorage {
       // Update existing provider
       existing.version = provider.version;
       existing.source = provider.source;
+      existing.lastUpdated = Date.now();
       existing.hasSettings = provider.hasSettings ?? existing.hasSettings;
       existing.path = provider.path;
-      existing.lastUpdated = Date.now();
     } else {
       // Add new provider
       installed.push({
@@ -300,6 +282,7 @@ export class ExtensionStorage {
           url: provider.source.url,
         },
         installed: true,
+        hasSettings: provider.hasSettings,
         installedAt: Date.now(),
       });
     }
@@ -338,7 +321,10 @@ export class ExtensionStorage {
     providerValue: string,
     sourceAuthor?: string,
   ): ProviderModule | undefined {
-    const providerMatches = this.getIndexedModules(providerValue);
+    const allModules =
+      mainStorage.getArray<ProviderModule>(ExtensionKeys.PROVIDER_MODULES) ||
+      [];
+    const providerMatches = allModules.filter(m => m.value === providerValue);
 
     if (providerMatches.length === 0) {
       return undefined;

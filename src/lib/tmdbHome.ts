@@ -1,40 +1,22 @@
-import axios from 'axios';
-import {ToastAndroid} from 'react-native';
+// @ts-nocheck
 import type {Post} from './providers/types';
 import type {HomePageData} from './getHomepagedata';
-import useContentStore from './zustand/contentStore';
 import {providerManager} from './services/ProviderManager';
+import {toast} from './zustand/toastStore';
 
 /**
- * Home is built from TMDB (rows, posters, hero). The selected provider is only
- * used when a title is opened or played: the TMDB title is looked up on that
- * provider and the match opens like any provider post.
+ * Home rows come from TMDB (key saved by the admin). A TMDB poster is not tied
+ * to any server, so opening one looks the title up on the selected server.
  */
+const API = 'https://api.themoviedb.org/3';
+export const IMG = 'https://image.tmdb.org/t/p';
 
-const TMDB_API = 'https://api.themoviedb.org/3';
-const IMG = 'https://image.tmdb.org/t/p';
-const TMDB_PREFIX = 'tmdb:';
-
-type MediaType = 'movie' | 'tv';
-
-interface TmdbRow {
-  filter: string;
-  title: string;
-  path: string;
-  /** media type of the results; 'mixed' reads it from each item */
-  type: MediaType | 'mixed';
-  params?: Record<string, string | number>;
-}
-
-const discover = (
-  type: MediaType,
-  params: Record<string, string | number>,
-): Pick<TmdbRow, 'path' | 'params'> => ({
+const discover = (type: string, params: Record<string, any>) => ({
   path: `/discover/${type}`,
   params: {sort_by: 'popularity.desc', 'vote_count.gte': 20, ...params},
 });
 
-export const TMDB_ROWS: TmdbRow[] = [
+export const TMDB_ROWS = [
   {filter: 'tmdb:trending', title: 'Trending Now', path: '/trending/all/week', type: 'mixed'},
   {filter: 'tmdb:popular-movie', title: 'Popular Movies', path: '/movie/popular', type: 'movie'},
   {filter: 'tmdb:popular-tv', title: 'Popular Series', path: '/tv/popular', type: 'tv'},
@@ -53,87 +35,44 @@ export const TMDB_ROWS: TmdbRow[] = [
   {filter: 'tmdb:upcoming', title: 'Coming Soon', path: '/movie/upcoming', type: 'movie'},
 ];
 
-export const TMDB_CATALOG = TMDB_ROWS.map(({title, filter}) => ({title, filter}));
+export const isTmdbLink = (link?: string) => !!link && link.startsWith('tmdb:');
 
-export const isTmdbLink = (link?: string): boolean =>
-  !!link && link.startsWith(TMDB_PREFIX);
+// Backdrops and overviews for the hero, keyed by the post link.
+const extra = new Map<string, {background: string; synopsis: string}>();
 
-export const isTmdbFilter = (filter?: string): boolean =>
-  !!filter && filter.startsWith(TMDB_PREFIX);
-
-const buildLink = (type: MediaType, id: number, year: string) =>
-  `${TMDB_PREFIX}${type}:${id}:${year}`;
-
-export const parseTmdbLink = (link: string) => {
-  const [, type, id, year] = link.split(':');
-  return {type: type as MediaType, id: Number(id), year: year || ''};
+const tmdb = async (key: string, path: string, params: Record<string, any> = {}, signal?: AbortSignal) => {
+  const q = new URLSearchParams({api_key: key, language: 'en-US', ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)]))});
+  const res = await fetch(`${API}${path}?${q}`, {signal});
+  if (!res.ok) throw new Error(res.status === 401 ? 'The TMDB API key is invalid.' : `TMDB error ${res.status}`);
+  return res.json();
 };
 
-const request = async (
-  apiKey: string,
-  path: string,
-  params: Record<string, string | number> = {},
-  signal?: AbortSignal,
-) => {
-  const {data} = await axios.get(`${TMDB_API}${path}`, {
-    params: {api_key: apiKey, language: 'en-US', ...params},
-    timeout: 15000,
-    signal,
-  });
-  return data;
-};
-
-/** True when TMDB accepts the key. Used by the admin before saving. */
-export const validateTmdbKey = async (apiKey: string): Promise<boolean> => {
-  try {
-    await request(apiKey.trim(), '/configuration');
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const toPost = (item: any, rowType: TmdbRow['type']): Post | null => {
-  const type: MediaType | undefined =
-    rowType === 'mixed'
-      ? item.media_type === 'movie' || item.media_type === 'tv'
-        ? item.media_type
-        : undefined
-      : rowType;
+const toPost = (item: any, rowType: string): Post | null => {
+  const type = rowType === 'mixed' ? (item.media_type === 'movie' || item.media_type === 'tv' ? item.media_type : undefined) : rowType;
   const title = item.title || item.name;
-  if (!type || !item.id || !title || !item.poster_path) {
-    return null;
-  }
+  if (!type || !item.id || !title || !item.poster_path) return null;
   const date: string = item.release_date || item.first_air_date || '';
-  return {
-    title,
-    link: buildLink(type, item.id, date.slice(0, 4)),
-    image: `${IMG}/w342${item.poster_path}`,
-  };
+  const link = `tmdb:${type}:${item.id}:${date.slice(0, 4)}`;
+  extra.set(link, {
+    background: item.backdrop_path ? `${IMG}/w1280${item.backdrop_path}` : '',
+    synopsis: item.overview || '',
+  });
+  return {title, link, image: `${IMG}/w342${item.poster_path}`};
 };
 
-const fetchRow = async (
-  apiKey: string,
-  row: TmdbRow,
-  signal: AbortSignal,
-): Promise<Post[]> => {
-  // Two pages per row so each row has a good amount to scroll.
+const fetchRow = async (key: string, row: any, signal: AbortSignal): Promise<Post[]> => {
   const pages = await Promise.all(
     [1, 2].map(page =>
-      request(apiKey, row.path, {...(row.params ?? {}), page}, signal).catch(
-        error => {
-          if (page === 1) {
-            throw error;
-          }
-          return {results: []};
-        },
-      ),
+      tmdb(key, row.path, {...(row.params || {}), page}, signal).catch(error => {
+        if (page === 1) throw error;
+        return {results: []};
+      }),
     ),
   );
   const seen = new Set<string>();
   const posts: Post[] = [];
-  for (const page of pages) {
-    for (const item of page.results ?? []) {
+  for (const p of pages) {
+    for (const item of p.results || []) {
       const post = toPost(item, row.type);
       if (post && !seen.has(post.link)) {
         seen.add(post.link);
@@ -144,214 +83,91 @@ const fetchRow = async (
   return posts;
 };
 
-interface TmdbHomeOptions {
-  previousData?: HomePageData[];
-  onCategory?: (data: HomePageData[]) => void;
-}
-
-/** Loads every TMDB row, publishing each as soon as it arrives. */
-export const getTmdbHomeData = async (
-  apiKey: string,
-  signal: AbortSignal,
-  options: TmdbHomeOptions = {},
-): Promise<HomePageData[]> => {
-  const rows: HomePageData[] = TMDB_ROWS.map(row => {
-    const previous = options.previousData?.find(r => r.filter === row.filter);
-    return {
-      title: row.title,
-      filter: row.filter,
-      Posts: previous?.Posts ?? [],
-      isLoading: !previous || previous.isLoading === true,
-    };
+export const fetchTmdbHome = async (key: string, signal: AbortSignal): Promise<HomePageData[]> => {
+  const settled = await Promise.allSettled(TMDB_ROWS.map(row => fetchRow(key, row, signal)));
+  const data: HomePageData[] = [];
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled' && r.value.length > 0) {
+      data.push({title: TMDB_ROWS[i].title, Posts: r.value, filter: TMDB_ROWS[i].filter});
+    }
   });
-  const publish = () => {
-    if (!signal.aborted) {
-      options.onCategory?.([...rows]);
+  if (data.length === 0) {
+    const firstError = settled.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+    throw new Error(firstError ? String(firstError.reason?.message || firstError.reason) : 'No content from TMDB');
+  }
+  return data;
+};
+
+/** Hero details for a TMDB post (no provider involved). */
+export const tmdbHeroMetadata = async (link: string, key: string) => {
+  let info = extra.get(link);
+  const [, type, id] = link.split(':');
+  if (!info || !info.synopsis) {
+    const d = await tmdb(key, `/${type}/${id}`);
+    info = {
+      background: d.backdrop_path ? `${IMG}/w1280${d.backdrop_path}` : '',
+      synopsis: d.overview || '',
+    };
+    extra.set(link, info);
+  }
+  return {background: info.background, image: info.background, synopsis: info.synopsis};
+};
+
+const normalize = (t: string) =>
+  String(t).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+const score = (post: Post, title: string, year: string) => {
+  const c = normalize(post.title);
+  const w = normalize(title);
+  if (!c || !w) return 0;
+  let s = 0;
+  if (c === w) s = 100;
+  else if (c.startsWith(w + ' ')) s = 80;
+  else if ((' ' + c + ' ').includes(' ' + w + ' ')) s = 60;
+  if (s > 0 && year && c.includes(year)) s += 15;
+  return s;
+};
+
+/** Finds a TMDB title on a server. Null when nothing fits well enough. */
+export const resolveTmdbPost = async (post: Post, providerValue: string): Promise<Post | null> => {
+  const year = post.link.split(':')[3] || '';
+  const results = await providerManager.getSearchPosts({
+    searchQuery: post.title,
+    page: 1,
+    providerValue,
+    signal: new AbortController().signal,
+  });
+  let best: Post | null = null;
+  let bestScore = 0;
+  for (const c of results) {
+    const s = score(c, post.title, year);
+    if (s > bestScore) {
+      best = c;
+      bestScore = s;
     }
-  };
-  publish();
-
-  let cursor = 0;
-  let successes = 0;
-  let firstError = '';
-  const worker = async () => {
-    while (cursor < TMDB_ROWS.length && !signal.aborted) {
-      const index = cursor++;
-      const row = TMDB_ROWS[index];
-      try {
-        const posts = await fetchRow(apiKey, row, signal);
-        if (posts.length > 0) {
-          successes += 1;
-        }
-        rows[index] = {title: row.title, filter: row.filter, Posts: posts};
-      } catch (error: any) {
-        if (signal.aborted) {
-          return;
-        }
-        const status = error?.response?.status;
-        firstError =
-          status === 401
-            ? 'The TMDB API key is invalid. Ask the admin to update it.'
-            : error?.message || 'Failed to load';
-        rows[index] = {
-          title: row.title,
-          filter: row.filter,
-          Posts: rows[index].Posts,
-          error: firstError,
-        };
-      }
-      publish();
-    }
-  };
-  await Promise.all(Array.from({length: 4}, worker));
-  if (signal.aborted) {
-    const error = new Error('Aborted');
-    error.name = 'AbortError';
-    throw error;
   }
-  if (successes === 0) {
-    throw new Error(firstError || 'Failed to load any content');
-  }
-  return rows;
+  return bestScore >= 60 ? best : null;
 };
 
-/** Hero artwork and text for a TMDB post, shaped like provider metadata. */
-export const fetchTmdbHeroMeta = async (
-  apiKey: string,
-  link: string,
-  signal?: AbortSignal,
-) => {
-  const {type, id} = parseTmdbLink(link);
-  const data = await request(
-    apiKey,
-    `/${type}/${id}`,
-    {append_to_response: 'images', include_image_language: 'en,null'},
-    signal,
-  );
-  const logo =
-    (data.images?.logos ?? []).find((l: any) => l.iso_639_1 === 'en') ??
-    data.images?.logos?.[0];
-  const genres: string[] = (data.genres ?? []).map((g: any) => g.name);
-  return {
-    title: data.title || data.name,
-    synopsis: data.overview,
-    type: type === 'tv' ? 'series' : 'movie',
-    background: data.backdrop_path ? `${IMG}/w1280${data.backdrop_path}` : '',
-    image: data.backdrop_path ? `${IMG}/w1280${data.backdrop_path}` : '',
-    poster: data.poster_path ? `${IMG}/w500${data.poster_path}` : '',
-    logo: logo ? `${IMG}/w500${logo.file_path}` : undefined,
-    genre: genres,
-    tags: genres,
-    rating: data.vote_average ? String(data.vote_average.toFixed(1)) : undefined,
-  };
-};
-
-const normalize = (text: string) =>
-  text
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
-
-const scorePost = (post: Post, title: string, year: string): number => {
-  const candidate = normalize(post.title);
-  const wanted = normalize(title);
-  if (!candidate || !wanted) {
-    return 0;
-  }
-  let score = 0;
-  if (candidate === wanted) {
-    score = 100;
-  } else if (candidate.startsWith(wanted + ' ')) {
-    score = 80;
-  } else if ((' ' + candidate + ' ').includes(' ' + wanted + ' ')) {
-    score = 60;
-  }
-  if (score > 0 && year && candidate.includes(year)) {
-    score += 15;
-  }
-  return score;
-};
-
-/** Finds the TMDB title on the selected provider. Null when nothing fits. */
-export const resolveTmdbPost = async (
-  post: Post,
-  providerValue: string,
-): Promise<Post | null> => {
-  const {year} = parseTmdbLink(post.link);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
-  try {
-    const results = await providerManager.getSearchPosts({
-      searchQuery: post.title,
-      page: 1,
-      providerValue,
-      signal: controller.signal,
-    });
-    let best: Post | null = null;
-    let bestScore = 0;
-    for (const candidate of results) {
-      const score = scorePost(candidate, post.title, year);
-      if (score > bestScore) {
-        best = candidate;
-        bestScore = score;
-      }
-    }
-    return bestScore >= 60 ? best : null;
-  } finally {
-    clearTimeout(timer);
-  }
-};
-
-interface NavigationLike {
-  navigate: (name: any, params: any) => void;
-}
-
-let resolving = false;
-
-/** Opens a TMDB post on the currently selected provider. */
-export const openTmdbPost = async (
-  navigation: NavigationLike,
-  post: Post,
-): Promise<void> => {
-  if (resolving) {
+/** Opens a TMDB post: finds it on the selected server, then shows its page. */
+export const openTmdbPost = async (post: Post, providerValue: string | undefined, navigate: (to: string) => void) => {
+  if (!providerValue) {
+    toast('Pick a server first (top bar).');
     return;
   }
-  const provider = useContentStore.getState().provider;
-  if (!provider?.value) {
-    ToastAndroid.show('Pick a server first', ToastAndroid.SHORT);
-    return;
-  }
-  resolving = true;
-  ToastAndroid.show(`Finding "${post.title}"…`, ToastAndroid.SHORT);
+  toast(`Finding "${post.title}"…`);
   try {
-    const match = await resolveTmdbPost(post, provider.value);
+    const match = await resolveTmdbPost(post, providerValue);
     if (match) {
-      navigation.navigate('Info', {
-        link: match.link,
-        provider: match.provider || provider.value,
-        poster: match.image || post.image,
-      });
+      const params = new URLSearchParams();
+      params.append('provider', match.provider || providerValue);
+      if (match.image || post.image) params.append('poster', match.image || post.image);
+      navigate(`/content/${encodeURIComponent(match.link)}?${params.toString()}`);
     } else {
-      ToastAndroid.show(
-        'No exact match on this server. Showing search results.',
-        ToastAndroid.LONG,
-      );
-      navigation.navigate('ScrollList', {
-        title: post.title,
-        filter: post.title,
-        providerValue: provider.value,
-        isSearch: true,
-      });
+      toast('No exact match on this server. Showing search results.');
+      navigate(`/?q=${encodeURIComponent(post.title)}`);
     }
   } catch (error) {
-    ToastAndroid.show(
-      error instanceof Error && error.message
-        ? error.message
-        : 'Could not search this server',
-      ToastAndroid.LONG,
-    );
+    toast(error instanceof Error ? error.message : 'Could not search this server');
   }
-  resolving = false;
 };

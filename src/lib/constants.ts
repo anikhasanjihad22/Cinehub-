@@ -1,3 +1,4 @@
+
 export const FLAGS = {
   GLOBAL: 'https://utfs.io/f/ImOWJajUmXfyRKHTpylsELpB6QlYA4OdG9Jfr3hagoCN5Mzt',
   INDIA: 'https://utfs.io/f/ImOWJajUmXfyYCEwdELCDZIMxNG5H27Bouwvb4fyVJrdqj3X',
@@ -5,9 +6,12 @@ export const FLAGS = {
   ITALY: 'https://utfs.io/f/ImOWJajUmXfynpGlTaXrTMAELcs2W76PyY4IRJVBXCHOofa5',
 };
 
-export const themes: {name: string; color: string}[] = [
+export const defaultDownloadFolder = 'vega'; // Will be resolved via Tauri FS
+export const downloadFolder = defaultDownloadFolder;
+
+export const themes: { name: string; color: string }[] = [
   {
-    name: 'CineHub',
+    name: 'Vega',
     color: '#FF6347',
   },
   {
@@ -45,5 +49,7 @@ export const themes: {name: string; color: string}[] = [
 ];
 
 export const socialLinks = {
-  telegram: 'https://t.me/+-Bo6KSNJWf9iNjQ1',
+  github: 'https://github.com/vega-org/vega-desktop',
+  discord: 'https://discord.gg/cr42m6maWy',
+  sponsor: 'https://github.com/sponsors/Zenda-Cross',
 };

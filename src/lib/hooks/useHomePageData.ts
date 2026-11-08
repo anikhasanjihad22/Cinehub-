@@ -1,171 +1,84 @@
-import {useCallback, useEffect, useState} from 'react';
-import {Image} from 'react-native';
-import {scheduleWhenIdle} from '../performance/idleWork';
-import {throwIfProviderAborted} from '../sandbox/abort';
+import {useEffect, useState} from 'react';
 import {QueryClient, useQuery, useQueryClient} from '@tanstack/react-query';
 import {getHomePageData, HomePageData} from '../getHomepagedata';
 import {Content} from '../zustand/contentStore';
 import {cacheStorage} from '../storage';
-import {deduplicatePosts} from '../providers/deduplicatePosts';
 import type {Post} from '../providers/types';
-import {
-  getTmdbHomeData,
-  fetchTmdbHeroMeta,
-  isTmdbLink,
-  TMDB_CATALOG,
-} from '../tmdbHome';
-import useRemoteConfigStore from '../zustand/remoteConfigStore';
-
-const normalizeHomePosts = (data: HomePageData[]) =>
-  data.map(category => ({
-    ...category,
-    Posts: deduplicatePosts(category.Posts || []),
-  }));
+import {fetchTmdbHome, isTmdbLink, tmdbHeroMetadata} from '../tmdbHome';
+import {getTmdbKey, peekTmdbKey} from '../services/remoteConfig';
 
 interface UseHomePageDataOptions {
   provider: Content['provider'];
   enabled?: boolean;
+  /** When the admin saved a TMDB key, Home shows TMDB rows. */
+  tmdbKey?: string;
 }
 
 export const useHomePageData = ({
   provider,
   enabled = true,
+  tmdbKey = '',
 }: UseHomePageDataOptions) => {
-  const queryClient = useQueryClient();
-  const scope = [
-    provider.source?.author || '',
-    provider.source?.url || '',
-    provider.value,
-    provider.version,
-  ];
-  const cacheKey = 'homeData:' + JSON.stringify(scope);
-  const queryKey = ['homePageData', ...scope];
-  const catalogOptions = {
-    queryKey: ['homeCatalog', ...scope],
-    queryFn: async ({signal}: {signal: AbortSignal}) => {
-      const {providerManager} = await import('../services/ProviderManager');
-      return providerManager.getCatalog({
-        providerValue: provider.value,
-        signal,
-      });
-    },
-    staleTime: 5 * 60 * 1000,
-    gcTime: 60 * 60 * 1000,
-  };
-  const catalogQuery = useQuery({
-    ...catalogOptions,
-    enabled: enabled && !!provider.value,
-  });
+  const tmdbMode = !!tmdbKey;
+  const cacheKey = tmdbMode ? 'homeDataTmdb' : 'homeData' + (provider?.value || '');
   const query = useQuery<HomePageData[], Error>({
-    queryKey,
-    select: normalizeHomePosts,
+    queryKey: ['homePageData', tmdbMode ? 'tmdb' : provider.value],
     queryFn: async ({signal}) => {
-      const catalogs = await queryClient.fetchQuery(catalogOptions);
-      return getHomePageData(provider, signal, {
-        catalogs,
-        previousData: queryClient.getQueryData<HomePageData[]>(queryKey),
-        onCategory: data => {
-          // Cancellation retains manual cache writes. Keep partial results
-          // stale so returning resumes unfinished rows immediately; query
-          // completion supplies the normal freshness timestamp.
-          if (!signal.aborted)
-            queryClient.setQueryData(queryKey, data, {updatedAt: 0});
-        },
-      });
-    },
-    enabled: enabled && !!provider.value,
-    staleTime: 60 * 1000,
-    gcTime: 60 * 60 * 1000,
-    retry: (count, error) => error.name !== 'AbortError' && count < 2,
-    initialData: () => {
-      const stored = cacheStorage.getString(cacheKey);
-      if (!stored) return undefined;
-      try {
-        return JSON.parse(stored);
-      } catch {
-        return undefined;
+      if (tmdbMode) {
+        return fetchTmdbHome(tmdbKey, signal);
       }
+      // Fetch fresh data from provider
+      const data = await getHomePageData(provider, signal);
+      return data;
+    },
+    enabled: enabled && (tmdbMode || !!provider?.value),
+    staleTime: 0, // Mark stale immediately so it revalidates in the background
+    gcTime: 60 * 60 * 1000, // 1 hour
+    retry: (failureCount, error) => {
+      if (error.name === 'AbortError') {
+        return false;
+      }
+      return failureCount < 3;
+    },
+    retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 30000),
+    // Add initial data from cache for instant loading without loading screen
+    initialData: () => {
+      const cache = cacheStorage.getString(cacheKey);
+      if (cache) {
+        try {
+          return JSON.parse(cache);
+        } catch {
+          return undefined;
+        }
+      }
+      return undefined;
     },
     initialDataUpdatedAt: 0,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: false,
+    refetchOnReconnect: 'always',
   });
-  useEffect(() => {
-    if (
-      !query.data?.length ||
-      query.isFetching ||
-      query.data.some(row => row.isLoading)
-    )
-      return;
-    const task = scheduleWhenIdle(() =>
-      cacheStorage.setString(cacheKey, JSON.stringify(query.data)),
-    );
-    return task;
-  }, [cacheKey, query.data, query.isFetching]);
-  return {...query, catalog: catalogQuery.data ?? []};
-};
 
-interface UseTmdbHomeOptions {
-  apiKey: string;
-  enabled?: boolean;
-}
-
-/** Home rows from TMDB. Independent of the selected provider. */
-export const useTmdbHomeData = ({apiKey, enabled = true}: UseTmdbHomeOptions) => {
-  const queryClient = useQueryClient();
-  const queryKey = ['tmdbHome', apiKey];
-  const cacheKey = 'tmdbHome:v1';
-  const query = useQuery<HomePageData[], Error>({
-    queryKey,
-    select: normalizeHomePosts,
-    queryFn: ({signal}) =>
-      getTmdbHomeData(apiKey, signal, {
-        previousData: queryClient.getQueryData<HomePageData[]>(queryKey),
-        onCategory: data => {
-          if (!signal.aborted)
-            queryClient.setQueryData(queryKey, data, {updatedAt: 0});
-        },
-      }),
-    enabled: enabled && !!apiKey,
-    staleTime: 10 * 60 * 1000,
-    gcTime: 60 * 60 * 1000,
-    retry: (count, error) => error.name !== 'AbortError' && count < 1,
-    initialData: () => {
-      const stored = cacheStorage.getString(cacheKey);
-      if (!stored) return undefined;
-      try {
-        return JSON.parse(stored);
-      } catch {
-        return undefined;
-      }
-    },
-    initialDataUpdatedAt: 0,
-    refetchOnWindowFocus: false,
-  });
   useEffect(() => {
-    if (
-      !query.data?.length ||
-      query.isFetching ||
-      query.data.some(row => row.isLoading)
-    )
-      return;
-    return scheduleWhenIdle(() =>
-      cacheStorage.setString(cacheKey, JSON.stringify(query.data)),
-    );
-  }, [query.data, query.isFetching]);
-  return {...query, catalog: TMDB_CATALOG};
+    if (query.data && query.data.length > 0 && (tmdbMode || provider?.value)) {
+      cacheStorage.setString(cacheKey, JSON.stringify(query.data));
+    }
+  }, [cacheKey, provider?.value, query.data, tmdbMode]);
+
+  return query;
 };
 
 export const HERO_COUNT = 4;
 const HERO_ROTATE_MS = 8000;
-// Extra wait after interactions settle before the other heroes load.
-const HERO_PREFETCH_DELAY_MS = 1000;
+// Longest wait for an idle moment before the other heroes load.
+const HERO_IDLE_TIMEOUT_MS = 3000;
 // Prefetched hero details stay fresh this long, so rotating back does not refetch.
 const HERO_PREFETCH_STALE_MS = 10 * 60 * 1000;
 
 // Hero links per provider, so tab switches and catalog refetches keep the same heroes.
 const heroSelectionCache = new Map<string, string[]>();
 
-const shuffle = <T>(items: T[]): T[] => {
+const shuffle = <T,>(items: T[]): T[] => {
   const result = [...items];
   for (let i = result.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -174,19 +87,27 @@ const shuffle = <T>(items: T[]): T[] => {
   return result;
 };
 
-/** Picks up to HERO_COUNT random posts from all catalogs, kept per provider. */
+/**
+ * Picks up to HERO_COUNT random posts, kept per provider. The last catalog
+ * with posts comes first; the others fill up when it has too few.
+ */
 export const getRandomHeroPosts = (
   homeData: HomePageData[],
   providerValue?: string,
 ): Post[] => {
   const pool = new Map<string, Post>();
-  for (const category of homeData || []) {
-    for (const post of category.Posts || []) {
+  const primaryLinks: string[] = [];
+  const otherLinks: string[] = [];
+  const categories = (homeData || []).filter(category => category.Posts?.length);
+  categories.forEach((category, categoryIndex) => {
+    const isPrimary = categoryIndex === categories.length - 1;
+    for (const post of category.Posts) {
       if (post?.link && !pool.has(post.link)) {
         pool.set(post.link, post);
+        (isPrimary ? primaryLinks : otherLinks).push(post.link);
       }
     }
-  }
+  });
   if (pool.size === 0) {
     return [];
   }
@@ -199,7 +120,10 @@ export const getRandomHeroPosts = (
     return cached;
   }
 
-  const links = shuffle(Array.from(pool.keys())).slice(0, HERO_COUNT);
+  const links = [...shuffle(primaryLinks), ...shuffle(otherLinks)].slice(
+    0,
+    HERO_COUNT,
+  );
   heroSelectionCache.set(cacheKey, links);
   return links.map(link => pool.get(link)!);
 };
@@ -213,23 +137,19 @@ export const clearHeroCache = (providerValue?: string) => {
   }
 };
 
-// TMDB heroes look the same on every provider, so they share one cache scope.
-const heroScope = (heroLink: string, providerValue: string) =>
-  isTmdbLink(heroLink) ? 'tmdb' : providerValue;
-
 const heroMetadataKey = (heroLink: string, providerValue: string) => [
   'heroMetadata',
   heroLink,
-  heroScope(heroLink, providerValue),
+  providerValue,
 ];
 
 const heroStorageKey = (heroLink: string, providerValue: string) =>
-  `heroMeta:${heroScope(heroLink, providerValue)}:${heroLink}`;
+  `heroMeta:${providerValue}:${heroLink}`;
 
 const readStoredHeroMetadata = (heroLink: string, providerValue: string) => {
-  const cached = cacheStorage.getString(
-    heroStorageKey(heroLink, providerValue),
-  );
+  const cached =
+    cacheStorage.getString(heroStorageKey(heroLink, providerValue)) ||
+    cacheStorage.getString(heroLink);
   if (cached) {
     try {
       return JSON.parse(cached);
@@ -240,23 +160,10 @@ const readStoredHeroMetadata = (heroLink: string, providerValue: string) => {
   return undefined;
 };
 
-const fetchHeroMetadata = async (
-  heroLink: string,
-  providerValue: string,
-  signal?: AbortSignal,
-) => {
+const fetchHeroMetadata = async (heroLink: string, providerValue: string) => {
   if (isTmdbLink(heroLink)) {
-    const meta = await fetchTmdbHeroMeta(
-      useRemoteConfigStore.getState().tmdbApiKey,
-      heroLink,
-      signal,
-    );
-    throwIfProviderAborted(signal);
-    cacheStorage.setString(
-      heroStorageKey(heroLink, providerValue),
-      JSON.stringify(meta),
-    );
-    return meta;
+    const key = peekTmdbKey() || (await getTmdbKey());
+    return tmdbHeroMetadata(heroLink, key);
   }
   const {providerManager} = await import('../services/ProviderManager');
   const {default: axios} = await import('axios');
@@ -264,7 +171,6 @@ const fetchHeroMetadata = async (
   const info = await providerManager.getMetaData({
     link: heroLink,
     provider: providerValue,
-    signal,
   });
 
   let result = info;
@@ -273,7 +179,7 @@ const fetchHeroMetadata = async (
     try {
       const response = await axios.get(
         `https://v3-cinemeta.strem.io/meta/${info.type}/${info.imdbId}.json`,
-        {timeout: 5000, signal},
+        {timeout: 5000},
       );
       result = response.data?.meta || info;
     } catch {
@@ -281,11 +187,9 @@ const fetchHeroMetadata = async (
     }
   }
 
-  throwIfProviderAborted(signal);
-  cacheStorage.setString(
-    heroStorageKey(heroLink, providerValue),
-    JSON.stringify(result),
-  );
+  const serialized = JSON.stringify(result);
+  cacheStorage.setString(heroStorageKey(heroLink, providerValue), serialized);
+  cacheStorage.setString(heroLink, serialized);
   return result;
 };
 
@@ -293,17 +197,15 @@ const fetchHeroMetadata = async (
 export const useHeroMetadata = (heroLink: string, providerValue: string) =>
   useQuery({
     queryKey: heroMetadataKey(heroLink, providerValue),
-    queryFn: ({signal}) => fetchHeroMetadata(heroLink, providerValue, signal),
-    enabled: !!heroLink && !!providerValue,
-    // Stored details still refresh once (initialDataUpdatedAt: 0), but a
-    // rotation back to a loaded hero must not refetch it every few seconds.
-    staleTime: HERO_PREFETCH_STALE_MS,
+    queryFn: () => fetchHeroMetadata(heroLink, providerValue),
+    enabled: !!heroLink && (!!providerValue || isTmdbLink(heroLink)),
+    staleTime: 0, // Instantly revalidate in background
     gcTime: 60 * 60 * 1000, // 1 hour
     retry: 2,
     // Use cached data as initial data
     initialData: () => readStoredHeroMetadata(heroLink, providerValue),
     initialDataUpdatedAt: 0,
-    refetchOnMount: true,
+    refetchOnMount: 'always',
   });
 
 /**
@@ -315,39 +217,22 @@ const prefetchHeroMetadata = async (
   queryClient: QueryClient,
   heroLink: string,
   providerValue: string,
-  signal?: AbortSignal,
 ): Promise<boolean> => {
   const queryKey = heroMetadataKey(heroLink, providerValue);
-  if (signal?.aborted) return false;
-  const onAbort = () => {
-    const query = queryClient.getQueryCache().find({queryKey, exact: true});
-    if (query?.getObserversCount() === 0)
-      queryClient.cancelQueries({queryKey, exact: true}).catch(() => {});
-  };
-  signal?.addEventListener('abort', onAbort, {once: true});
   const stored = readStoredHeroMetadata(heroLink, providerValue);
-  if (
-    stored !== undefined &&
-    queryClient.getQueryData(queryKey) === undefined
-  ) {
+  if (stored !== undefined && queryClient.getQueryData(queryKey) === undefined) {
     queryClient.setQueryData(queryKey, stored, {updatedAt: 0});
   }
   try {
     await queryClient.fetchQuery({
       queryKey,
-      queryFn: ({signal: querySignal}) =>
-        fetchHeroMetadata(heroLink, providerValue, querySignal),
+      queryFn: () => fetchHeroMetadata(heroLink, providerValue),
       staleTime: HERO_PREFETCH_STALE_MS,
       retry: 1,
     });
-    // Measure the artwork too, so the hero shows at its final layout at once.
-    const data: any = queryClient.getQueryData(queryKey);
-    prefetchArtworkShape(data?.background || data?.image || data?.poster);
     return true;
   } catch {
     return queryClient.getQueryData(queryKey) !== undefined;
-  } finally {
-    signal?.removeEventListener('abort', onAbort);
   }
 };
 
@@ -363,58 +248,6 @@ const prefetchHeroMetadata = async (
  */
 export const isPosterLikeArtwork = (width: number, height: number) =>
   width / height < 1.2 || width < 1000;
-
-// Image URL to whether it is poster-like, so a hero shown again is not
-// measured again.
-const artworkShapeCache = new Map<string, boolean>();
-
-/**
- * Measures an image to decide how to show it as a backdrop. `ready` turns
- * true once the size is known, so callers can wait instead of drawing the
- * image sharp and then switching it to blurred.
- */
-export const useArtworkShape = (uri: string | undefined) => {
-  const [shape, setShape] = useState<{uri: string; posterLike: boolean}>();
-  const cached = uri ? artworkShapeCache.get(uri) : undefined;
-  useEffect(() => {
-    if (!uri || artworkShapeCache.has(uri)) {
-      return;
-    }
-    let cancelled = false;
-    const done = (posterLike: boolean) => {
-      artworkShapeCache.set(uri, posterLike);
-      if (!cancelled) {
-        setShape({uri, posterLike});
-      }
-    };
-    Image.getSize(
-      uri,
-      (width, height) => done(isPosterLikeArtwork(width, height)),
-      () => done(false),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [uri]);
-  if (cached !== undefined) {
-    return {ready: true, posterLike: cached};
-  }
-  const ready = !!uri && shape?.uri === uri;
-  return {ready, posterLike: ready && shape?.posterLike === true};
-};
-
-/** Measures an image ahead of time so useArtworkShape answers at once. */
-export const prefetchArtworkShape = (uri: string | undefined) => {
-  if (!uri || artworkShapeCache.has(uri)) {
-    return;
-  }
-  Image.getSize(
-    uri,
-    (width, height) =>
-      artworkShapeCache.set(uri, isPosterLikeArtwork(width, height)),
-    () => artworkShapeCache.set(uri, false),
-  );
-};
 
 export const useHeroRotation = (
   posts: Post[],
@@ -439,59 +272,68 @@ export const useHeroRotation = (
   }, [linksKey, firstLink, providerValue]);
 
   useEffect(() => {
-    if (paused || !firstDone || posts.length < 2) {
+    if (!firstDone || posts.length < 2) {
       return;
     }
-    const cancelJobs = posts.slice(1).map(post =>
-      scheduleWhenIdle(async signal => {
-        if (signal.aborted) return;
+    let cancelled = false;
+    const rest = posts.slice(1);
+    const loadRest = async () => {
+      for (const post of rest) {
+        if (cancelled) {
+          return;
+        }
         const ready = await prefetchHeroMetadata(
           queryClient,
           post.link,
           providerValue,
-          signal,
         );
-        if (!signal.aborted && ready)
+        if (!cancelled && ready) {
           setReadyLinks(current =>
             current.includes(post.link) ? current : [...current, post.link],
           );
-      }, HERO_PREFETCH_DELAY_MS),
-    );
-    return () => cancelJobs.forEach(cancel => cancel());
-  }, [firstDone, linksKey, providerValue, queryClient, paused]);
+        }
+      }
+    };
+    // WKWebView on macOS has no requestIdleCallback.
+    if (typeof window.requestIdleCallback === 'function') {
+      const handle = window.requestIdleCallback(() => void loadRest(), {
+        timeout: HERO_IDLE_TIMEOUT_MS,
+      });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(handle);
+      };
+    }
+    const timer = setTimeout(() => void loadRest(), 1000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // linksKey stands for posts: the list is rebuilt on every catalog refetch.
+  }, [firstDone, linksKey, providerValue, queryClient]);
 
-  // Moves to the next (1) or previous (-1) hero that has loaded.
-  const step = useCallback(
-    (direction: 1 | -1) => {
+  useEffect(() => {
+    if (paused || readyLinks.length < 2) {
+      return;
+    }
+    const timer = setInterval(() => {
       setIndex(current => {
-        for (let offset = 1; offset <= posts.length; offset++) {
-          const next =
-            (current + direction * offset + posts.length * offset) %
-            posts.length;
+        for (let step = 1; step <= posts.length; step++) {
+          const next = (current + step) % posts.length;
           if (readyLinks.includes(posts[next].link)) {
             return next;
           }
         }
         return current;
       });
-    },
-    [posts, readyLinks],
-  );
-
-  // The timer restarts on every change, so a swipe gets the full interval.
-  useEffect(() => {
-    if (paused || readyLinks.length < 2) {
-      return;
-    }
-    const timer = setTimeout(() => step(1), HERO_ROTATE_MS);
-    return () => clearTimeout(timer);
-  }, [paused, readyLinks.length, step, index]);
+    }, HERO_ROTATE_MS);
+    return () => clearInterval(timer);
+  }, [paused, posts, readyLinks]);
 
   const activeIndex = index < posts.length ? index : 0;
   return {
     post: posts[activeIndex] as Post | undefined,
     activeIndex,
     readyLinks,
-    step,
   };
 };

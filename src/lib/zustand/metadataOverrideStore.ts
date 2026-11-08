@@ -1,26 +1,21 @@
-import {create} from 'zustand';
-import {persist, createJSONStorage} from 'zustand/middleware';
-import {createZustandStorage} from '../storage/StorageService';
-import type {LocalMetadata} from '../localContent/model';
-import type {Info} from '../providers/types';
-
+import { create } from "zustand";
+import { mainStorage } from "../storage";
+import type { LocalMetadata } from "../localContent/model";
+import type { Info } from "../providers/types";
 export interface ProviderMetadata extends LocalMetadata {
   useEpisodeMetadata?: boolean;
 }
-
 export const metadataOverrideKey = (provider: string, link: string) =>
   JSON.stringify([provider, link]);
-
 export const applyMetadataOverride = (
   info: Info,
-  metadata?: LocalMetadata,
+  metadata?: ProviderMetadata,
 ): Info =>
   metadata
     ? {
         ...info,
         title: metadata.title,
         imdbId: metadata.imdbId,
-        // Provider links and playback type remain the source for playback.
         image: metadata.background || metadata.poster || info.image,
         poster: metadata.poster || info.poster,
         logo: metadata.logo,
@@ -29,8 +24,8 @@ export const applyMetadataOverride = (
         tmdbId: undefined,
       }
     : info;
-
-interface MetadataOverrideState {
+const KEY = "provider-metadata-overrides-v1";
+interface State {
   overrides: Record<string, ProviderMetadata>;
   setMetadata: (
     provider: string,
@@ -38,25 +33,25 @@ interface MetadataOverrideState {
     metadata?: ProviderMetadata,
   ) => void;
 }
-
-const useMetadataOverrideStore = create<MetadataOverrideState>()(
-  persist(
-    set => ({
-      overrides: {},
-      setMetadata: (provider, link, metadata) =>
-        set(state => {
-          const overrides = {...state.overrides};
-          const key = metadataOverrideKey(provider, link);
-          if (metadata) overrides[key] = metadata;
-          else delete overrides[key];
-          return {overrides};
-        }),
+function readOverrides(): State["overrides"] {
+  try {
+    return JSON.parse(mainStorage.getString(KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+const useMetadataOverrideStore = create<State>()((set) => ({
+  overrides: readOverrides(),
+  setMetadata: (provider, link, metadata) =>
+    set((state) => {
+      const overrides = { ...state.overrides };
+      const key = metadataOverrideKey(provider, link);
+      if (metadata) overrides[key] = metadata;
+      else delete overrides[key];
+      return { overrides };
     }),
-    {
-      name: 'provider-metadata-overrides-v1',
-      storage: createJSONStorage(() => createZustandStorage()),
-    },
-  ),
+}));
+useMetadataOverrideStore.subscribe((state) =>
+  mainStorage.setString(KEY, JSON.stringify(state.overrides)),
 );
-
 export default useMetadataOverrideStore;

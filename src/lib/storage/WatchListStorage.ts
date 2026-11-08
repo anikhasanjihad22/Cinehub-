@@ -1,13 +1,13 @@
-import {mainStorage} from './StorageService';
+import { mainStorage } from "./StorageService";
 
 /**
  * Storage keys for the library (saved titles and their categories)
  */
 export enum WatchListKeys {
-  WATCH_LIST = 'watchlist',
-  COLLECTIONS = 'library-collections',
+  WATCH_LIST = "watchlist",
+  COLLECTIONS = "library-collections",
   /** Set once the Watchlist category was added to the stored categories. */
-  DEFAULT_COLLECTION_ADDED = 'library-default-collection-added',
+  DEFAULT_COLLECTION_ADDED = "library-default-collection-added",
 }
 
 /**
@@ -15,7 +15,7 @@ export enum WatchListKeys {
  * so the user can rename or delete it. While it exists, it holds titles saved
  * by older app versions and titles whose categories were all deleted.
  */
-export const DEFAULT_COLLECTION_ID = 'watchlist';
+export const DEFAULT_COLLECTION_ID = "watchlist";
 
 /**
  * Interface for watchlist item
@@ -44,8 +44,8 @@ export interface LibraryCollection {
 
 export const DEFAULT_COLLECTION: LibraryCollection = {
   id: DEFAULT_COLLECTION_ID,
-  name: 'Watchlist',
-  icon: 'bookmark',
+  name: "Watchlist",
+  icon: "bookmark",
   createdAt: 0,
   updatedAt: 0,
 };
@@ -77,21 +77,13 @@ export class WatchListStorage {
    * Get all watchlist items
    */
   getWatchList(): WatchListItem[] {
-    const watchList =
-      mainStorage.getArray<Partial<WatchListItem>>(WatchListKeys.WATCH_LIST) ||
-      [];
-    return watchList
-      .filter(item => Boolean(item.title && item.link && item.provider))
-      .map(item => ({...item, poster: item.poster || ''}) as WatchListItem);
+    return mainStorage.getArray<WatchListItem>(WatchListKeys.WATCH_LIST) || [];
   }
 
   /**
    * Add an item to the watchlist
    */
   addToWatchList(item: WatchListItem): WatchListItem[] {
-    if (!item.provider) {
-      return this.getWatchList();
-    }
     const watchList = this.getWatchList();
 
     // Filter out any existing item with the same link
@@ -129,7 +121,7 @@ export class WatchListStorage {
     const watchList = this.getWatchList();
     const index = watchList.findIndex(i => i.link === item.link);
     if (index === -1) {
-      return this.addToWatchList({...item, collections: unique});
+      return this.addToWatchList({ ...item, collections: unique });
     }
     watchList[index] = {
       ...watchList[index],

@@ -1,13 +1,13 @@
-import type {SkipInterval} from '../providers/types';
+import type { SkipInterval } from "../providers/types";
 
-export const CINEHUB_SYNC_SCHEMA_VERSION = 1;
-export const CINEHUB_SYNC_DIRECTORY = '.cinehub-sync';
+export const VEGA_SYNC_SCHEMA_VERSION = 1;
+export const VEGA_SYNC_DIRECTORY = ".vega-sync";
 
 export type SyncRecordKind =
-  | 'download'
-  | 'history'
-  | 'watchlist'
-  | 'collection';
+  | "download"
+  | "history"
+  | "watchlist"
+  | "collection";
 
 export interface SyncedDownload {
   id: string;
@@ -16,7 +16,7 @@ export interface SyncedDownload {
   showName?: string;
   episodeName?: string;
   seasonTitle?: string;
-  type: 'movie' | 'series';
+  type: "movie" | "series";
   isSubtitle?: boolean;
   imdbId?: string;
   poster?: string;
@@ -29,16 +29,6 @@ export interface SyncedDownload {
   totalBytes: number;
   completedAt: number;
   updatedAt: number;
-  skip?: SkipInterval[];
-}
-
-export interface SyncedHistoryEpisode {
-  id?: string;
-  title: string;
-  link: string;
-  sourceLink?: string;
-  description?: string;
-  image?: string;
   skip?: SkipInterval[];
 }
 
@@ -58,7 +48,15 @@ export interface SyncedHistory {
   episodeTitle?: string;
   /** Season (link group) the episode belongs to. Older versions omit it. */
   seasonTitle?: string;
-  episode?: SyncedHistoryEpisode;
+  episode?: {
+    id?: string;
+    title: string;
+    link: string;
+    sourceLink?: string;
+    description?: string;
+    image?: string;
+    skip?: SkipInterval[];
+  };
   type?: string;
   cachedInfoData?: unknown;
   updatedAt: number;
@@ -91,13 +89,13 @@ export interface SyncTombstone {
   deletedAt: number;
 }
 
-export interface CineHubSyncManifest {
+export interface VegaSyncManifest {
   schemaVersion: number;
   deviceId: string;
   revision: number;
   generatedAt: number;
   downloads: Record<string, SyncedDownload>;
-  history?: Record<string, SyncedHistory>;
+  history: Record<string, SyncedHistory>;
   watchlist?: Record<string, SyncedWatchListItem>;
   collections?: Record<string, SyncedLibraryCollection>;
   tombstones: Record<string, SyncTombstone>;
@@ -117,12 +115,12 @@ export const getTombstoneKey = (kind: SyncRecordKind, id: string): string =>
   `${kind}:${id}`;
 
 const normalizeKeyPart = (value?: string): string =>
-  (value || '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
+  (value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
 const getEpisodeKey = (item: SyncedDownload): string => {
   const episodeNumber =
@@ -132,7 +130,7 @@ const getEpisodeKey = (item: SyncedDownload): string => {
     return `i${Math.max(Number(episodeNumber) - 1, 0)}`;
   }
   const directIndex = item.id.match(/_direct_(\d+)$/i)?.[1];
-  return directIndex ? `i${Number(directIndex)}` : 'i0';
+  return directIndex ? `i${Number(directIndex)}` : "i0";
 };
 
 const getSeasonKey = (item: SyncedDownload): string => {
@@ -146,31 +144,32 @@ export const getDownloadMediaKey = (item: SyncedDownload): string => {
     ? normalizeKeyPart(item.imdbId)
     : normalizeKeyPart(item.showName || item.title);
   const baseKey = `${item.type}:${identity}:${getSeasonKey(item)}:${getEpisodeKey(item)}`;
-  if (item.isSubtitle || item.id.includes('_subtitle_')) {
-    const subPart = item.id.includes('_subtitle_')
-      ? item.id.split('_subtitle_')[1]
+  if (item.isSubtitle || item.id.includes("_subtitle_")) {
+    const subPart = item.id.includes("_subtitle_")
+      ? item.id.split("_subtitle_")[1]
       : item.title;
     return `${baseKey}:subtitle:${normalizeKeyPart(subPart)}`;
   }
   return baseKey;
 };
 
-const isManifest = (value: unknown): value is CineHubSyncManifest => {
-  if (!value || typeof value !== 'object') {
+const isManifest = (value: unknown): value is VegaSyncManifest => {
+  if (!value || typeof value !== "object") {
     return false;
   }
-  const manifest = value as Partial<CineHubSyncManifest>;
+  const manifest = value as Partial<VegaSyncManifest>;
   return (
-    manifest.schemaVersion === CINEHUB_SYNC_SCHEMA_VERSION &&
-    typeof manifest.deviceId === 'string' &&
-    typeof manifest.revision === 'number' &&
+    manifest.schemaVersion === VEGA_SYNC_SCHEMA_VERSION &&
+    typeof manifest.deviceId === "string" &&
+    typeof manifest.revision === "number" &&
     Boolean(manifest.downloads) &&
+    Boolean(manifest.history) &&
     Boolean(manifest.tombstones)
   );
 };
 
-export const parseSyncManifest = (content: string): CineHubSyncManifest | null => {
-  const parse = (value: string): CineHubSyncManifest | null => {
+export const parseSyncManifest = (content: string): VegaSyncManifest | null => {
+  const parse = (value: string): VegaSyncManifest | null => {
     try {
       const parsed = JSON.parse(value) as unknown;
       return isManifest(parsed) ? parsed : null;
@@ -191,7 +190,7 @@ export const parseSyncManifest = (content: string): CineHubSyncManifest | null =
     if (inString) {
       if (escaped) {
         escaped = false;
-      } else if (character === '\\') {
+      } else if (character === "\\") {
         escaped = true;
       } else if (character === '"') {
         inString = false;
@@ -200,9 +199,9 @@ export const parseSyncManifest = (content: string): CineHubSyncManifest | null =
     }
     if (character === '"') {
       inString = true;
-    } else if (character === '{') {
+    } else if (character === "{") {
       depth += 1;
-    } else if (character === '}') {
+    } else if (character === "}") {
       depth -= 1;
       if (depth === 0) {
         return parse(content.slice(0, index + 1));
@@ -212,23 +211,8 @@ export const parseSyncManifest = (content: string): CineHubSyncManifest | null =
   return null;
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === 'object';
-
-const hasUpdatedAt = (value: unknown): boolean =>
-  isRecord(value) && typeof value.updatedAt === 'number';
-
-const isValidDownload = (value: unknown): value is SyncedDownload =>
-  hasUpdatedAt(value) && typeof (value as SyncedDownload).id === 'string';
-
-const isValidTombstone = (value: unknown): value is SyncTombstone =>
-  isRecord(value) &&
-  typeof value.kind === 'string' &&
-  typeof value.id === 'string' &&
-  typeof value.deletedAt === 'number';
-
 export const mergeSyncManifests = (
-  manifests: CineHubSyncManifest[],
+  manifests: VegaSyncManifest[],
 ): MergedSyncState => {
   const downloads: Record<string, SyncedDownload> = {};
   const history: Record<string, SyncedHistory> = {};
@@ -238,11 +222,8 @@ export const mergeSyncManifests = (
 
   for (const manifest of manifests) {
     for (const item of Object.values(manifest.downloads)) {
-      if (!isValidDownload(item)) {
-        continue;
-      }
       const mediaKey = getDownloadMediaKey(item);
-      const normalizedItem = {...item, mediaKey};
+      const normalizedItem = { ...item, mediaKey };
       if (
         !downloads[mediaKey] ||
         normalizedItem.updatedAt > downloads[mediaKey].updatedAt
@@ -250,52 +231,30 @@ export const mergeSyncManifests = (
         downloads[mediaKey] = normalizedItem;
       }
     }
-    for (const [link, item] of Object.entries(manifest.watchlist || {})) {
-      if (!hasUpdatedAt(item)) {
-        continue;
-      }
-      if (!watchlist[link] || item.updatedAt >= watchlist[link].updatedAt) {
-        watchlist[link] = item;
-      }
-    }
-    for (const [id, item] of Object.entries(manifest.collections || {})) {
-      if (!hasUpdatedAt(item)) {
-        continue;
-      }
-      if (!collections[id] || item.updatedAt >= collections[id].updatedAt) {
-        collections[id] = item;
-      }
-    }
-    for (const [id, item] of Object.entries(manifest.history || {})) {
-      if (!hasUpdatedAt(item)) {
-        continue;
-      }
+    for (const [id, item] of Object.entries(manifest.history)) {
       const existing = history[id];
       if (!existing) {
         history[id] = item;
       } else if (item.updatedAt >= existing.updatedAt) {
         history[id] = {
-          ...existing,
           ...item,
-          title: item.title || existing.title,
-          poster: item.poster ?? existing.poster,
-          background: item.background ?? existing.background,
-          provider: item.provider ?? existing.provider,
-          link: item.link || existing.link,
-          episodeTitle: item.episodeTitle ?? existing.episodeTitle,
-          episode: item.episode ?? existing.episode,
-          type: item.type ?? existing.type,
-          isSeries: item.isSeries ?? existing.isSeries,
           progress: item.progress ?? existing.progress,
           duration: item.duration ?? existing.duration,
           currentTime: item.currentTime ?? existing.currentTime,
         };
       }
     }
-    for (const [key, tombstone] of Object.entries(manifest.tombstones)) {
-      if (!isValidTombstone(tombstone)) {
-        continue;
+    for (const [link, item] of Object.entries(manifest.watchlist || {})) {
+      if (!watchlist[link] || item.updatedAt >= watchlist[link].updatedAt) {
+        watchlist[link] = item;
       }
+    }
+    for (const [id, item] of Object.entries(manifest.collections || {})) {
+      if (!collections[id] || item.updatedAt >= collections[id].updatedAt) {
+        collections[id] = item;
+      }
+    }
+    for (const [key, tombstone] of Object.entries(manifest.tombstones)) {
       if (!tombstones[key] || tombstone.deletedAt > tombstones[key].deletedAt) {
         tombstones[key] = tombstone;
       }
@@ -303,9 +262,9 @@ export const mergeSyncManifests = (
   }
 
   for (const tombstone of Object.values(tombstones)) {
-    if (tombstone.kind === 'download') {
+    if (tombstone.kind === "download") {
       const itemKey = Object.keys(downloads).find(
-        key =>
+        (key) =>
           downloads[key].id === tombstone.id ||
           key === tombstone.id ||
           key === tombstone.mediaKey,
@@ -314,12 +273,12 @@ export const mergeSyncManifests = (
       if (item && tombstone.deletedAt >= item.updatedAt) {
         delete downloads[itemKey!];
       }
-    } else if (tombstone.kind === 'history') {
+    } else if (tombstone.kind === "history") {
       const item = history[tombstone.id];
       if (item && tombstone.deletedAt >= item.updatedAt) {
         delete history[tombstone.id];
       }
-    } else if (tombstone.kind === 'collection') {
+    } else if (tombstone.kind === "collection") {
       const item = collections[tombstone.id];
       if (item && tombstone.deletedAt >= item.updatedAt) {
         delete collections[tombstone.id];
@@ -338,5 +297,11 @@ export const mergeSyncManifests = (
       .slice(0, MAX_SYNC_HISTORY_ITEMS),
   );
 
-  return {downloads, history: limitedHistory, watchlist, collections, tombstones};
+  return {
+    downloads,
+    history: limitedHistory,
+    watchlist,
+    collections,
+    tombstones,
+  };
 };

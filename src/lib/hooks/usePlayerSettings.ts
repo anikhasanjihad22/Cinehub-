@@ -1,80 +1,157 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
-import {
-  cacheStorage,
-  settingsStorage,
-  PLAYER_RESIZE_MODES,
-  PlayerResizeMode,
-} from '../storage';
+import { useCallback, useEffect, useRef, useState } from "react";
+import { cacheStorage, mainStorage } from "../storage";
+import {localContentId} from '../localContent/library';
+import useLocalContentStore from '../zustand/localContentStore';
 
 interface UsePlayerProgressOptions {
   activeEpisode: any;
-  onProgressSaved?: (position: number, duration: number) => void;
+  routeParams: any;
+  playbackRate: number;
+  updatePlaybackInfo: (link: string, data: any) => void;
 }
 
 export const usePlayerProgress = ({
   activeEpisode,
-  onProgressSaved,
+  routeParams,
+  playbackRate,
+  updatePlaybackInfo,
 }: UsePlayerProgressOptions) => {
-  const videoPositionRef = useRef({position: 0, duration: 0});
+  const videoPositionRef = useRef({ position: 0, duration: 0 });
   const lastSavedPositionRef = useRef(0);
-  const hasProgressRef = useRef(false);
-  const pendingProgressRef = useRef<{
-    link: string;
-    position: number;
-    duration: number;
-    onSaved?: (position: number, duration: number) => void;
-  } | null>(null);
-
-  const flushProgress = useCallback(() => {
-    const progress = pendingProgressRef.current;
-    if (!progress) return;
-    cacheStorage.setString(progress.link, JSON.stringify({position: progress.position, duration: progress.duration}));
-    progress.onSaved?.(progress.position, progress.duration);
-    lastSavedPositionRef.current = progress.position;
-    pendingProgressRef.current = null;
-  }, []);
+  const lastHistoryPositionRef = useRef(0);
+  const localId = routeParams?.localContent ? localContentId(routeParams.infoUrl || '') : undefined;
+  const saveLocalProgress = useCallback((position: number, duration: number) => {
+    if (!localId || !activeEpisode?.link || !Number.isFinite(position) || position < 0 || !Number.isFinite(duration) || duration <= 0) return;
+    cacheStorage.setString(activeEpisode.link, JSON.stringify({position, duration}));
+    useLocalContentStore.getState().savePlayback(localId, activeEpisode.link, position, duration);
+  }, [localId, activeEpisode?.link]);
 
   useEffect(() => {
+    if (!localId) return;
     videoPositionRef.current = {position: 0, duration: 0};
     lastSavedPositionRef.current = 0;
-    hasProgressRef.current = false;
-    return flushProgress;
-  }, [activeEpisode.link, flushProgress]);
+    return () => {
+      const {position, duration} = videoPositionRef.current;
+      saveLocalProgress(position, duration);
+    };
+  }, [localId, saveLocalProgress]);
 
   // Memoized progress handler
   const handleProgress = useCallback(
-    (e: {currentTime: number; seekableDuration: number}) => {
-      const {currentTime, seekableDuration} = e;
-      if (!Number.isFinite(currentTime) || currentTime < 0 || !Number.isFinite(seekableDuration) || seekableDuration <= 0) return;
-      hasProgressRef.current = true;
+    (e: { currentTime: number; seekableDuration: number }) => {
+      const { currentTime, seekableDuration } = e;
 
       videoPositionRef.current = {
         position: currentTime,
         duration: seekableDuration,
       };
-      pendingProgressRef.current = {
-        link: activeEpisode.link,
-        position: currentTime,
-        duration: seekableDuration,
-        onSaved: onProgressSaved,
-      };
+
+      // Update playback info for watch history
+      if (
+        routeParams?.episodeList &&
+        routeParams?.linkIndex !== undefined &&
+        !routeParams?.doNotTrack
+      ) {
+        if (Math.abs(currentTime - lastHistoryPositionRef.current) >= 5) {
+          updatePlaybackInfo(
+            activeEpisode.sourceLink ||
+              activeEpisode.id ||
+              routeParams.episodeList[routeParams.linkIndex].link,
+            {
+              currentTime,
+              duration: seekableDuration,
+              playbackRate,
+            },
+          );
+          lastHistoryPositionRef.current = currentTime;
+        }
+      }
+
+      // Store progress data for watch history display
+      if (!routeParams?.doNotTrack) {
+        storeWatchProgressForHistory(
+          routeParams.episodeList[routeParams.linkIndex].link,
+          currentTime,
+          seekableDuration,
+        );
+      }
 
       // Save progress periodically (every 5 seconds)
       if (
         Math.abs(currentTime - lastSavedPositionRef.current) > 5 ||
         currentTime - lastSavedPositionRef.current > 5
       ) {
-        flushProgress();
+        const uniqueEpisodeKey =
+          activeEpisode.id ||
+          `resume_${routeParams?.primaryTitle}_${routeParams?.secondaryTitle}_${routeParams?.linkIndex}`;
+        cacheStorage.setString(
+          uniqueEpisodeKey,
+          JSON.stringify({
+            position: currentTime,
+            duration: seekableDuration,
+          }),
+        );
+        saveLocalProgress(currentTime, seekableDuration);
+        lastSavedPositionRef.current = currentTime;
       }
     },
-    [activeEpisode.link, onProgressSaved, flushProgress],
+    [
+      activeEpisode.id,
+      activeEpisode.link,
+      routeParams.episodeList,
+      routeParams.linkIndex,
+      routeParams.infoUrl,
+      routeParams.primaryTitle,
+      routeParams.secondaryTitle,
+      updatePlaybackInfo,
+      playbackRate,
+      saveLocalProgress,
+    ],
+  );
+
+  // Dedicated function to store watch progress for history display
+  const storeWatchProgressForHistory = useCallback(
+    (link: string, currentTime: number, duration: number) => {
+      try {
+        if (currentTime > 0 && duration > 0) {
+          const historyKey = routeParams.infoUrl || link;
+          const historyProgressKey = `watch_history_progress_${historyKey}`;
+          const percentage = (currentTime / duration) * 100;
+
+          const progressData = {
+            currentTime,
+            duration,
+            percentage: percentage,
+            infoUrl: routeParams.infoUrl || "",
+            title: routeParams?.primaryTitle || "",
+            episodeTitle: routeParams?.secondaryTitle || "",
+            updatedAt: Date.now(),
+          };
+
+          mainStorage.setString(
+            historyProgressKey,
+            JSON.stringify(progressData),
+          );
+
+          // Also store with episodeTitle-specific key for series episodes
+          if (routeParams?.secondaryTitle) {
+            const episodeKey = `watch_history_progress_${historyKey}_${routeParams.secondaryTitle.replace(
+              /\s+/g,
+              "_",
+            )}`;
+            mainStorage.setString(episodeKey, JSON.stringify(progressData));
+          }
+        }
+      } catch (error) {
+        console.error("Error storing watch progress for history:", error);
+      }
+    },
+    [routeParams],
   );
 
   return {
     videoPositionRef,
     handleProgress,
-    flushProgress,
-    hasProgressRef,
   };
 };
 
@@ -83,31 +160,33 @@ export const usePlayerSettings = () => {
   const [showControls, setShowControls] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    'audio' | 'subtitle' | 'server' | 'quality' | 'speed' | 'sleep'
-  >('audio');
-  const [resizeMode, setResizeMode] = useState<PlayerResizeMode>(() =>
-    settingsStorage.getDefaultResizeMode(),
-  );
-  const [playbackRate, setPlaybackRate] = useState(() =>
-    settingsStorage.getPlaybackSpeed(),
-  );
+    "audio" | "subtitle" | "server" | "quality" | "speed"
+  >("audio");
+  const [resizeMode, setResizeMode] = useState<any>("none");
+  const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isPlayerLocked, setIsPlayerLocked] = useState(false);
   const [showUnlockButton, setShowUnlockButton] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string>('');
+  const [toastMessage, setToastMessage] = useState<string>("");
   const [showToast, setShowToast] = useState(false);
   const [isTextVisible, setIsTextVisible] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(true);
 
-  const unlockButtonTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const unlockButtonTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
-  // Cycles the fit for this session only; the default lives in Preferences.
+  // Memoized resize mode handler
   const handleResizeMode = useCallback(() => {
-    const index = PLAYER_RESIZE_MODES.findIndex(
-      option => option.mode === resizeMode,
-    );
-    const nextMode = PLAYER_RESIZE_MODES[(index + 1) % PLAYER_RESIZE_MODES.length];
+    const modes = [
+      { mode: "none", name: "Fit" },
+      { mode: "cover", name: "Cover" },
+      { mode: "stretch", name: "Stretch" },
+      { mode: "contain", name: "Contain" },
+    ];
+    const index = modes.findIndex((mode) => mode.mode === resizeMode);
+    const nextMode = modes[(index + 1) % modes.length];
     setResizeMode(nextMode.mode);
-    setToast('Resize Mode: ' + nextMode.label, 2000);
+    setToast("Resize Mode: " + nextMode.name, 2000);
   }, [resizeMode]);
 
   // Memoized toast setter
@@ -135,7 +214,7 @@ export const usePlayerSettings = () => {
       unlockButtonTimerRef.current = null;
     }
 
-    setToast(newLockState ? 'Player Locked' : 'Player Unlocked', 2000);
+    setToast(newLockState ? "Player Locked" : "Player Unlocked", 2000);
   }, [isPlayerLocked, setToast]);
 
   // Memoized locked screen tap handler
@@ -156,15 +235,9 @@ export const usePlayerSettings = () => {
     }, 10000);
   }, [showUnlockButton]);
 
-  // Speed picked by the user; temporary changes like the 2x hold skip this.
-  const selectPlaybackRate = useCallback((rate: number) => {
-    setPlaybackRate(rate);
-    settingsStorage.setPlaybackSpeed(rate);
-  }, []);
-
   // Memoized fullscreen toggle
   const toggleFullScreen = useCallback(() => {
-    setIsFullScreen(prev => !prev);
+    setIsFullScreen((prev) => !prev);
   }, []);
 
   return {
@@ -178,7 +251,6 @@ export const usePlayerSettings = () => {
     setResizeMode,
     playbackRate,
     setPlaybackRate,
-    selectPlaybackRate,
     isPlayerLocked,
     showUnlockButton,
     toastMessage,

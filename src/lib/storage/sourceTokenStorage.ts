@@ -1,22 +1,12 @@
-import {MMKVLoader} from 'react-native-mmkv-storage';
+import {StorageService} from './StorageService';
 
-// GitHub tokens for private provider sources, keyed by source author. Kept in
-// a separate encrypted instance (key held in Android Keystore) so tokens never
-// land in the main storage or in backups.
+// GitHub tokens for private provider sources, keyed by source author. Kept
+// under their own storage prefix, away from source data. Provider code runs
+// in the sandbox worker, which has no access to localStorage.
 const RAW_GITHUB_ORIGIN = 'https://raw.githubusercontent.com/';
 const MAX_TOKEN_LENGTH = 255;
 
-let storage: ReturnType<MMKVLoader['initialize']> | undefined;
-
-const getStorage = () => {
-  if (!storage) {
-    storage = new MMKVLoader()
-      .withInstanceID('provider-source-tokens')
-      .withEncryption()
-      .initialize();
-  }
-  return storage;
-};
+const storage = new StorageService('provider-source-tokens');
 
 export const normalizeSourceToken = (token: string): string | undefined => {
   const trimmed = token.trim();
@@ -28,15 +18,15 @@ export const normalizeSourceToken = (token: string): string | undefined => {
 
 export const sourceTokenStorage = {
   get(author: string): string | undefined {
-    return getStorage().getString(author) || undefined;
+    return storage.getString(author) || undefined;
   },
 
   set(author: string, token: string): void {
-    getStorage().setString(author, token);
+    storage.setString(author, token);
   },
 
   delete(author: string): void {
-    getStorage().removeItem(author);
+    storage.delete(author);
   },
 
   has(author: string): boolean {

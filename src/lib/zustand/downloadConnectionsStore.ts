@@ -1,5 +1,5 @@
-import {create} from 'zustand';
-import type {DownloadRange} from '../downloadSegmentMap';
+import { create } from "zustand";
+import type { DownloadRange } from "../downloadSegmentMap";
 
 export interface DownloadConnectionDetails {
   ranges: DownloadRange[];
@@ -19,18 +19,16 @@ interface DownloadConnectionsState {
  * Live connection data for active downloads. Kept out of the persisted
  * downloads store: it changes twice a second and means nothing after a restart.
  */
-const useDownloadConnectionsStore = create<DownloadConnectionsState>(set => ({
-  details: {},
-  setDetails: (downloadId, details) =>
-    set(state => ({details: {...state.details, [downloadId]: details}})),
-  clearDetails: downloadId =>
-    set(state => {
-      if (!(downloadId in state.details)) {
-        return state;
-      }
-      const {[downloadId]: _removed, ...rest} = state.details;
-      return {details: rest};
-    }),
-}));
-
-export default useDownloadConnectionsStore;
+export const useDownloadConnectionsStore = create<DownloadConnectionsState>(
+  (set) => ({
+    details: {},
+    setDetails: (downloadId, details) =>
+      set((state) => ({ details: { ...state.details, [downloadId]: details } })),
+    clearDetails: (downloadId) =>
+      set((state) => {
+        if (!(downloadId in state.details)) return state;
+        const { [downloadId]: _removed, ...rest } = state.details;
+        return { details: rest };
+      }),
+  }),
+);

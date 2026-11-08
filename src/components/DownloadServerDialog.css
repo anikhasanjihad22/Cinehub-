@@ -1,0 +1,327 @@
+.download-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(16px);
+  animation: download-dialog-fade 160ms ease-out;
+}
+
+.download-dialog-content {
+  display: flex;
+  width: min(580px, calc(100vw - 32px));
+  max-height: min(760px, 86vh);
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  color: var(--on-surface);
+  background: var(--surface-container-high);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.52);
+  animation: download-dialog-enter 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.download-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px 24px 18px;
+  border-bottom: 1px solid var(--outline-variant);
+  flex-shrink: 0;
+}
+
+.download-dialog-header h2 {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 750;
+  letter-spacing: -0.015em;
+}
+.download-dialog-header p {
+  margin: 5px 0 0;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+}
+.download-dialog-header .icon-btn {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--on-surface-variant);
+  background: var(--surface-container-highest);
+}
+.download-dialog-header .icon-btn:hover,
+.download-dialog-header .icon-btn.tv-focus {
+  border-color: var(--outline);
+  color: var(--on-primary-container);
+  background: var(--primary-container);
+}
+
+.download-dialog-tabs-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 14px 20px 4px;
+}
+
+.download-dialog-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--surface-container-highest, #232222);
+}
+
+.download-dialog-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 18px;
+  border-radius: 12px;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--on-surface-variant, #c4c6d0);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.download-dialog-tab:hover {
+  color: var(--on-surface);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.download-dialog-tab.active {
+  color: var(--on-secondary-container, #1d192b);
+  background: var(--secondary-container, #e8def8);
+  font-weight: 700;
+}
+
+.download-dialog-tab.tv-focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.subtitle-icon-badge {
+  color: var(--on-secondary-container);
+  background: var(--secondary-container);
+}
+
+.download-dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 20px 24px;
+  box-sizing: border-box;
+}
+
+.stream-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.stream-item {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 78px;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  color: var(--on-surface);
+  background: var(--surface-container-low);
+  text-align: left;
+  overflow: hidden;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    transform 150ms ease;
+}
+
+.stream-item:hover {
+  border-color: var(--outline);
+  outline: none;
+  background: var(--surface-container-highest);
+}
+.stream-item.tv-focus {
+  border-color: var(--primary);
+  outline: none;
+  background: var(--surface-container-highest);
+}
+
+.stream-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--on-primary-container);
+  background: var(--primary-container);
+}
+.stream-details {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.stream-details h4 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--on-surface);
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.stream-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 6px;
+  max-width: 100%;
+}
+.quality-badge {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 12px;
+  color: var(--on-secondary-container);
+  background: var(--secondary-container);
+  font-size: 11px;
+  font-weight: 720;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.quality-badge.tag-badge {
+  color: var(--on-surface-variant);
+  background: var(--surface-container-highest);
+}
+.stream-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--on-surface-variant);
+}
+.copy-btn {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: var(--on-surface-variant);
+  background: transparent;
+  cursor: pointer;
+}
+.copy-btn:hover {
+  color: var(--on-surface);
+  background: var(--surface-container-highest);
+}
+.copy-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  color: var(--on-surface);
+  background: var(--surface-container-highest);
+}
+.downloaded-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-highest);
+}
+
+.downloaded-banner-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.downloaded-banner-info h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.downloaded-banner-info p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+.delete-download-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--on-error-container, #ffdad6);
+  background: var(--error-container, #93000a);
+  cursor: pointer;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.delete-download-btn:hover,
+.delete-download-btn.tv-focus {
+  opacity: 0.9;
+}
+
+.empty-state-dialog {
+  display: flex;
+  min-height: 190px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--on-surface-variant);
+  text-align: center;
+}
+.empty-state-dialog svg {
+  color: var(--error);
+}
+
+@keyframes download-dialog-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes download-dialog-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .download-dialog-overlay,
+  .download-dialog-content,
+  .stream-item {
+    animation: none;
+    transition: none;
+  }
+}

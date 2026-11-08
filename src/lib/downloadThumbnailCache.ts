@@ -1,89 +1,53 @@
-import * as RNFS from '@dr.pogodin/react-native-fs';
-import {downloadsStorage} from './storage/DownloadsStorage';
-import {getVideoThumbnail} from './videoThumbnail';
+import { invoke } from "@tauri-apps/api/core";
+import {isTauriRuntime} from "../platform/host";
 
-const THUMBNAIL_TIMESTAMP_MS = 30_000;
-const thumbnailUris = new Map<string, string>(
-  Object.entries(downloadsStorage.getThumbnails() || {}),
-);
-const inFlight = new Map<string, Promise<string>>();
+const DOWNLOAD_THUMBNAIL_TIMESTAMP_SECONDS = 30;
+
+const resolvedThumbnails = new Map<string, string | null>();
+const pendingThumbnails = new Map<string, Promise<string | null>>();
 let extractionQueue: Promise<void> = Promise.resolve();
-let cacheGeneration = 0;
 
-const getCacheKey = (filePath: string): string =>
-  `${filePath}|${THUMBNAIL_TIMESTAMP_MS}|crop-bars-v1`;
-
-const uriToPath = (uri: string): string => {
-  if (!uri.startsWith('file://')) {
-    return uri;
-  }
+const extractThumbnail = async (filePath: string) => {
   try {
-    return decodeURIComponent(uri.slice('file://'.length));
-  } catch {
-    return uri.slice('file://'.length);
+    return await invoke<string>("generate_video_thumbnail", {
+      source: filePath,
+      timestamp: DOWNLOAD_THUMBNAIL_TIMESTAMP_SECONDS,
+      headers: null,
+    });
+  } catch (error) {
+    console.warn("Failed to generate downloaded video thumbnail", error);
+    return null;
   }
 };
 
-const persistThumbnailUris = (): void => {
-  downloadsStorage.saveThumbnails(Object.fromEntries(thumbnailUris));
-};
+/**
+ * Generates the 30-second download thumbnail one at a time so opening a page
+ * with many episodes cannot create a burst of MPV decoder instances. The
+ * native command also persists each result in the app cache.
+ */
+export const getDownloadedVideoThumbnail = (filePath: string) => {
+  if (!isTauriRuntime()) return Promise.resolve(null);
+  const source = filePath.trim();
+  if (!source) return Promise.resolve(null);
 
-const enqueueExtraction = <T>(task: () => Promise<T>): Promise<T> => {
-  const result = extractionQueue.catch(() => undefined).then(task);
-  extractionQueue = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-};
-
-export const getDownloadedVideoThumbnail = async (
-  filePath: string,
-): Promise<string> => {
-  const key = getCacheKey(filePath);
-  const cachedUri = thumbnailUris.get(key);
-  if (cachedUri) {
-    if (await RNFS.exists(uriToPath(cachedUri)).catch(() => false)) {
-      return cachedUri;
-    }
-    thumbnailUris.delete(key);
-    persistThumbnailUris();
+  if (resolvedThumbnails.has(source)) {
+    return Promise.resolve(resolvedThumbnails.get(source) ?? null);
   }
 
-  const existingRequest = inFlight.get(key);
-  if (existingRequest) {
-    return existingRequest;
-  }
+  const pending = pendingThumbnails.get(source);
+  if (pending) return pending;
 
-  const requestGeneration = cacheGeneration;
-  const request = enqueueExtraction(async () => {
-    const result = await getVideoThumbnail(
-      filePath,
-      THUMBNAIL_TIMESTAMP_MS,
-      {},
-      {
-        cache: true,
-        maxWidth: 320,
-        maxHeight: 180,
-        quality: 80,
-        cropBlackBars: true,
-      },
-    );
-    if (requestGeneration === cacheGeneration) {
-      thumbnailUris.set(key, result.uri);
-      persistThumbnailUris();
-    }
-    return result.uri;
-  }).finally(() => {
-    inFlight.delete(key);
+  const request = new Promise<string | null>((resolve) => {
+    extractionQueue = extractionQueue
+      .catch(() => undefined)
+      .then(async () => {
+        const thumbnail = await extractThumbnail(source);
+        resolvedThumbnails.set(source, thumbnail);
+        pendingThumbnails.delete(source);
+        resolve(thumbnail);
+      });
   });
 
-  inFlight.set(key, request);
+  pendingThumbnails.set(source, request);
   return request;
-};
-
-export const clearDownloadedVideoThumbnailMemoryCache = (): void => {
-  cacheGeneration += 1;
-  thumbnailUris.clear();
-  inFlight.clear();
 };

@@ -1,665 +1,466 @@
-import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import React, {useEffect, useMemo, useState} from 'react';
+import useLocalContentStore from '../../lib/zustand/localContentStore';
+import {localContentId, localLibraryItem} from '../../lib/localContent/library';
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Keyboard,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  TextInput,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+  doesFocusableExist,
+  setFocus,
+} from "@noriginmedia/norigin-spatial-navigation-core";
+import * as Dialog from "@radix-ui/react-dialog";
+import {
+  LuArrowLeft as ArrowLeft,
+  LuCheck as Check,
+  LuCircle as Circle,
+  LuCircleCheck as CircleCheck,
+  LuPlus as Plus,
+  LuX as X,
+} from "react-icons/lu";
+import { FocusableButton } from "../layout/FocusableButton";
+import { FocusableInput } from "../layout/FocusableInput";
+import { useDialogFocusBoundary } from "../../lib/hooks/useDialogFocusBoundary";
 import {
   LIBRARY_COLORS,
   LIBRARY_EMOJIS,
   LIBRARY_ICON_KEYS,
-} from '../../lib/library/libraryIcons';
+} from "../../lib/library/libraryIcons";
 import {
   DEFAULT_COLLECTION_ID,
   getItemCollectionIds,
   type LibraryCollection,
   type WatchListItem,
-} from '../../lib/storage/WatchListStorage';
-import {isTV} from '../../lib/tv';
-import {useTVFocusBorderColor} from '../../lib/tv/useTVFocusBorderColor';
-import useWatchListStore from '../../lib/zustand/watchListStore';
-import useLocalContentStore from '../../lib/zustand/localContentStore';
-import {localContentId, localLibraryItem} from '../../lib/localContent/library';
-import {useM3Colors} from '../../theme/M3PaletteContext';
-import {readableOnColor} from '../../theme/seeds';
-import {TVFocusable} from '../tv';
-import AppText from '../ui/Text';
-import LibraryIcon from './LibraryIcon';
+} from "../../lib/storage/WatchListStorage";
+import useWatchListStore from "../../lib/zustand/watchListStore";
+import { LibraryIcon } from "./LibraryIcon";
+import "./LibraryCollectionDialog.css";
 
 interface LibraryCollectionDialogProps {
-  visible: boolean;
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   /** Title to save. Opens the category picker for it. */
   item?: WatchListItem;
   /** Category to edit. Without `item` or this, the dialog creates one. */
   collection?: LibraryCollection;
   /** Called with the category after it was created or edited. */
   onSaved?: (collection: LibraryCollection) => void;
+  /** Focus key to return to when the dialog closes (TV navigation). */
+  restoreFocusKey?: string;
 }
 
-type View_ = 'pick' | 'edit';
-type IconTab = 'icons' | 'emoji';
+type Step = "pick" | "edit";
+type IconTab = "icons" | "emoji";
 
 const NAME_MAX_LENGTH = 40;
+const FIRST_PICK_KEY = "LIB_DLG_PICK_0";
+const NEW_PICK_KEY = "LIB_DLG_NEW";
+const NAME_KEY = "LIB_DLG_NAME";
 
 /**
  * Save a title to library categories, or create and edit a category with a
- * name, icon (icon or emoji) and color. One modal for both, so creating a
- * category while saving a title does not stack dialogs (TV focus stays here).
+ * name, icon (icon or emoji) and color. One dialog for both, so creating a
+ * category while saving a title does not stack dialogs.
  */
-const LibraryCollectionDialog = ({
-  visible,
-  onClose,
+export const LibraryCollectionDialog: React.FC<LibraryCollectionDialogProps> = ({
+  open,
+  onOpenChange,
   item,
   collection,
   onSaved,
-}: LibraryCollectionDialogProps) => {
-  const colors = useM3Colors();
-  const focusBorderColor = useTVFocusBorderColor();
-  const {width: screenWidth, height: screenHeight} = useWindowDimensions();
-  const watchList = useWatchListStore(state => state.watchList);
+  restoreFocusKey,
+}) => {
+  const watchList = useWatchListStore((state) => state.watchList);
   const localTitles = useLocalContentStore(state => state.titles);
-  const collections = useWatchListStore(state => state.collections);
-  const setItemCollections = useWatchListStore(
-    state => state.setItemCollections,
-  );
-  const createCollection = useWatchListStore(state => state.createCollection);
-  const updateCollection = useWatchListStore(state => state.updateCollection);
-  const deleteCollection = useWatchListStore(state => state.deleteCollection);
+  const collections = useWatchListStore((state) => state.collections);
+  const setItemCollections = useWatchListStore((state) => state.setItemCollections);
+  const createCollection = useWatchListStore((state) => state.createCollection);
+  const updateCollection = useWatchListStore((state) => state.updateCollection);
+  const deleteCollection = useWatchListStore((state) => state.deleteCollection);
 
-  const [view, setView] = useState<View_>(item ? 'pick' : 'edit');
-  const [name, setName] = useState('');
-  const [icon, setIcon] = useState('popcorn');
+  const [step, setStep] = useState<Step>(item ? "pick" : "edit");
+  const [name, setName] = useState("");
+  const [icon, setIcon] = useState("popcorn");
   const [color, setColor] = useState<string | undefined>(undefined);
-  const [iconTab, setIconTab] = useState<IconTab>('icons');
-  const [nameFocused, setNameFocused] = useState(false);
+  const [iconTab, setIconTab] = useState<IconTab>("icons");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const iconGridRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    iconGridRef.current?.scrollTo({top: 0, left: 0, behavior: 'instant'});
+  }, [iconTab]);
 
-  const editing = view === 'edit' && Boolean(collection) && !item;
+  const focusControl = (key: string) => {
+    if (!doesFocusableExist(key)) return true;
+    setFocus(key);
+    return false;
+  };
+
+  const editing = step === "edit" && Boolean(collection) && !item;
 
   // Reset only when the dialog opens or its target changes. Parents build
   // `item` inline, so a new object each render must not reset the form.
   const itemLink = item?.link;
   const collectionId = collection?.id;
   useEffect(() => {
-    if (!visible) {
-      return;
-    }
-    setView(item ? 'pick' : 'edit');
-    setName(collection?.name || '');
-    setIcon(collection?.icon || 'popcorn');
+    if (!open) return;
+    setStep(item ? "pick" : "edit");
+    setName(collection?.name || "");
+    setIcon(collection?.icon || "popcorn");
     setColor(collection?.color);
     setIconTab(
       collection?.icon && !LIBRARY_ICON_KEYS.includes(collection.icon)
-        ? 'emoji'
-        : 'icons',
+        ? "emoji"
+        : "icons",
     );
     setConfirmDelete(false);
-  }, [visible, itemLink, collectionId]);
+  }, [open, itemLink, collectionId]);
 
+  // With no categories, the picker starts on "New category".
+  const firstPickKey = collections.length > 0 ? FIRST_PICK_KEY : NEW_PICK_KEY;
+  const { ref, DialogFocusProvider } = useDialogFocusBoundary({
+    isOpen: open,
+    focusKey: "LIB_DLG",
+    preferredChildFocusKey: item ? firstPickKey : NAME_KEY,
+    restoreFocusKey,
+  });
+
+  // Switching between picker and editor unmounts the focused control. Move
+  // TV focus to the first control of the new step.
+  const previousStep = useRef(step);
   useEffect(() => {
-    const showSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      e => setKeyboardHeight(e.endCoordinates.height),
-    );
-    const hideSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => setKeyboardHeight(0),
-    );
-    return () => {
-      showSub.remove();
-      hideSub.remove();
+    if (!open || previousStep.current === step) {
+      previousStep.current = step;
+      return;
+    }
+    previousStep.current = step;
+    const target = step === "pick" ? firstPickKey : NAME_KEY;
+    let attempts = 0;
+    let timer = 0;
+    const tryFocus = () => {
+      if (doesFocusableExist(target)) setFocus(target);
+      else if (attempts++ < 10) timer = window.setTimeout(tryFocus, 30);
     };
-  }, []);
+    timer = window.setTimeout(tryFocus, 30);
+    return () => window.clearTimeout(timer);
+  }, [open, step]);
 
   const existingIds = useMemo(
-    () => new Set(collections.map(c => c.id)),
+    () => new Set(collections.map((c) => c.id)),
     [collections],
   );
   const localTitle = localTitles.find(title => title.id === localContentId(item?.link || ''));
   const savedItem = localTitle
     ? localTitle.inLibrary !== false ? localLibraryItem(localTitle) : undefined
-    : item ? watchList.find(saved => saved.link === item.link) : undefined;
-  const selectedIds = savedItem
-    ? getItemCollectionIds(savedItem, existingIds)
-    : [];
+    : item ? watchList.find((saved) => saved.link === item.link) : undefined;
+  const selectedIds = savedItem ? getItemCollectionIds(savedItem, existingIds) : [];
+
+  const close = () => onOpenChange(false);
 
   const toggleCollection = (id: string) => {
-    if (!item) {
-      return;
-    }
+    if (!item) return;
     const next = selectedIds.includes(id)
-      ? selectedIds.filter(selected => selected !== id)
+      ? selectedIds.filter((selected) => selected !== id)
       : [...selectedIds, id];
     setItemCollections(savedItem || item, next);
   };
 
   const openCreate = () => {
-    setName('');
-    setIcon('popcorn');
+    setName("");
+    setIcon("popcorn");
     setColor(undefined);
-    setIconTab('icons');
-    setView('edit');
+    setIconTab("icons");
+    setStep("edit");
   };
 
   const handleSave = () => {
     const trimmed = name.trim();
-    if (!trimmed) {
-      return;
-    }
-    Keyboard.dismiss();
+    if (!trimmed) return;
     if (editing && collection) {
-      updateCollection(collection.id, {name: trimmed, icon, color});
-      onSaved?.({...collection, name: trimmed, icon, color});
-      onClose();
+      updateCollection(collection.id, { name: trimmed, icon, color });
+      onSaved?.({ ...collection, name: trimmed, icon, color });
+      close();
       return;
     }
-    const created = createCollection({name: trimmed, icon, color});
+    const created = createCollection({ name: trimmed, icon, color });
     onSaved?.(created);
     if (item) {
       // Saving a title: put it in the new category, then show the picker.
       setItemCollections(savedItem || item, [...selectedIds, created.id]);
-      setView('pick');
+      setStep("pick");
     } else {
-      onClose();
+      close();
     }
   };
 
   const handleDelete = () => {
-    if (!collection) {
-      return;
-    }
+    if (!collection) return;
     if (!confirmDelete) {
       setConfirmDelete(true);
       return;
     }
     deleteCollection(collection.id);
-    onClose();
+    close();
   };
 
-  const handleBackOrClose = () => {
-    if (view === 'edit' && item) {
-      setView('pick');
-      return;
-    }
-    onClose();
+  const backOrClose = () => {
+    if (step === "edit" && item) setStep("pick");
+    else close();
   };
 
-  const dialogWidth = Math.min(screenWidth - 32, isTV ? 600 : 400);
-  const maxDialogHeight = (screenHeight - keyboardHeight) * 0.88;
-  const iconCell = isTV ? 52 : 40;
-  const gridGap = isTV ? 10 : 6;
-
-  const renderButton = ({
-    label,
-    onPress,
-    primary,
-    danger,
-    disabled,
-    preferredFocus,
-  }: {
-    label: string;
-    onPress: () => void;
-    primary?: boolean;
-    danger?: boolean;
-    disabled?: boolean;
-    preferredFocus?: boolean;
-  }) => {
-    const background = danger
-      ? colors.errorContainer
-      : primary
-        ? colors.primary
-        : colors.surfaceContainerHighest;
-    const foreground = danger
-      ? colors.onErrorContainer
-      : primary
-        ? readableOnColor(colors.primary)
-        : colors.onSurface;
-    return (
-      <TVFocusable
-        accessibilityRole="button"
-        accessibilityLabel={label}
-        onPress={onPress}
-        disabled={disabled}
-        hasTVPreferredFocus={preferredFocus}
-        registerScreenFocus={false}
-        borderRadius={16}
-        focusScale={1.05}
-        focusBorderColor={focusBorderColor}
-        style={{
-          alignItems: 'center',
-          backgroundColor: background,
-          borderRadius: 16,
-          flex: 1,
-          height: isTV ? 52 : 48,
-          justifyContent: 'center',
-          opacity: disabled ? 0.45 : 1,
-          paddingHorizontal: 12,
-        }}>
-        <AppText role="labelLargeEmphasized" style={{color: foreground}}>
-          {label}
-        </AppText>
-      </TVFocusable>
-    );
-  };
-
-  const renderHeader = (title: string, subtitle?: string) => (
-    <View
-      style={{
-        alignItems: 'center',
-        flexDirection: 'row',
-        gap: 12,
-        marginBottom: 16,
-      }}>
-      {view === 'edit' && item ? (
-        <TVFocusable
-          accessibilityRole="button"
-          accessibilityLabel="Back to categories"
-          onPress={handleBackOrClose}
-          registerScreenFocus={false}
-          borderRadius={14}
-          focusScale={1.1}
-          focusBorderColor={focusBorderColor}
-          style={{
-            alignItems: 'center',
-            backgroundColor: colors.surfaceContainerHighest,
-            borderRadius: 14,
-            height: 40,
-            justifyContent: 'center',
-            width: 40,
-          }}>
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={22}
-            color={colors.onSurfaceVariant}
-          />
-        </TVFocusable>
-      ) : null}
-      <View style={{flex: 1}}>
-        <AppText role="titleLargeEmphasized" style={{color: colors.onSurface}}>
-          {title}
-        </AppText>
-        {subtitle ? (
-          <AppText
-            role="bodyMedium"
-            numberOfLines={1}
-            style={{color: colors.onSurfaceVariant, marginTop: 2}}>
-            {subtitle}
-          </AppText>
-        ) : null}
-      </View>
-    </View>
+  const renderPicker = () => (
+    <>
+      <div className="extensions-dialog-header">
+        <div>
+          <Dialog.Title>Save to library</Dialog.Title>
+          <Dialog.Description className="library-dialog-subtitle">
+            {item?.title}
+          </Dialog.Description>
+        </div>
+        <FocusableButton
+          focusKey="LIB_DLG_CLOSE"
+          className="extensions-dialog-close"
+          aria-label="Close"
+          onClick={close}
+        >
+          <X size={20} />
+        </FocusableButton>
+      </div>
+      <div className="library-pick-list" role="group" aria-label="Categories">
+        {collections.map((row, index) => {
+          const checked = selectedIds.includes(row.id);
+          return (
+            <FocusableButton
+              key={row.id}
+              focusKey={`LIB_DLG_PICK_${index}`}
+              className={`library-pick-row${checked ? " selected" : ""}`}
+              role="checkbox"
+              aria-checked={checked}
+              onClick={() => toggleCollection(row.id)}
+            >
+              <LibraryIcon icon={row.icon} color={row.color} size={18} tile />
+              <span className="library-pick-name">{row.name}</span>
+              {checked ? (
+                <CircleCheck size={22} className="library-pick-check" />
+              ) : (
+                <Circle size={22} className="library-pick-check" />
+              )}
+            </FocusableButton>
+          );
+        })}
+        <FocusableButton
+          focusKey={NEW_PICK_KEY}
+          className="library-pick-row library-pick-new"
+          onClick={openCreate}
+        >
+          <span className="library-pick-new-icon">
+            <Plus size={20} />
+          </span>
+          <span className="library-pick-name">New category</span>
+        </FocusableButton>
+      </div>
+      <div className="extensions-dialog-actions">
+        <FocusableButton
+          focusKey="LIB_DLG_DONE"
+          className="dialog-primary-button"
+          onClick={close}
+        >
+          Done
+        </FocusableButton>
+      </div>
+    </>
   );
 
-  const renderPicker = () => {
-    const rows = collections;
-    return (
-      <>
-        {renderHeader('Save to library', item?.title)}
-        <ScrollView
-          style={{flexGrow: 0, maxHeight: maxDialogHeight - 200}}
-          contentContainerStyle={{gap: 8}}
-          showsVerticalScrollIndicator={false}>
-          {rows.map((row, index) => {
-            const checked = selectedIds.includes(row.id);
-            return (
-              <TVFocusable
-                key={row.id}
-                accessibilityRole="checkbox"
-                accessibilityState={{checked}}
-                accessibilityLabel={row.name}
-                onPress={() => toggleCollection(row.id)}
-                hasTVPreferredFocus={isTV && index === 0}
-                registerScreenFocus={false}
-                borderRadius={18}
-                focusScale={1.03}
-                focusBorderColor={focusBorderColor}
-                style={{
-                  alignItems: 'center',
-                  backgroundColor: checked
-                    ? colors.secondaryContainer
-                    : colors.surfaceContainerHighest,
-                  borderRadius: 18,
-                  flexDirection: 'row',
-                  gap: 12,
-                  minHeight: isTV ? 60 : 56,
-                  paddingHorizontal: 12,
-                }}>
-                <LibraryIcon
-                  icon={row.icon}
-                  color={row.color}
-                  size={isTV ? 20 : 18}
-                  tile
-                />
-                <AppText
-                  role="bodyLarge"
-                  numberOfLines={1}
-                  style={{
-                    color: checked
-                      ? colors.onSecondaryContainer
-                      : colors.onSurface,
-                    flex: 1,
-                  }}>
-                  {row.name}
-                </AppText>
-                <MaterialCommunityIcons
-                  name={
-                    checked ? 'checkbox-marked-circle' : 'checkbox-blank-circle-outline'
-                  }
-                  size={24}
-                  // On-container color stays readable on the checked row, even
-                  // with low-saturation artwork palettes where primary fades.
-                  color={
-                    checked ? colors.onSecondaryContainer : colors.onSurfaceVariant
-                  }
-                />
-              </TVFocusable>
-            );
-          })}
-          <TVFocusable
-            accessibilityRole="button"
-            accessibilityLabel="New category"
-            onPress={openCreate}
-            hasTVPreferredFocus={isTV && rows.length === 0}
-            registerScreenFocus={false}
-            borderRadius={18}
-            focusScale={1.03}
-            focusBorderColor={focusBorderColor}
-            style={{
-              alignItems: 'center',
-              borderColor: colors.outlineVariant,
-              borderRadius: 18,
-              borderStyle: 'dashed',
-              borderWidth: 1.5,
-              flexDirection: 'row',
-              gap: 12,
-              minHeight: isTV ? 60 : 56,
-              paddingHorizontal: 12,
-            }}>
-            <View
-              style={{
-                alignItems: 'center',
-                height: isTV ? 36 : 32,
-                justifyContent: 'center',
-                width: isTV ? 36 : 32,
-              }}>
-              <MaterialCommunityIcons
-                name="plus"
-                size={24}
-                color={colors.primary}
-              />
-            </View>
-            <AppText role="bodyLarge" style={{color: colors.primary}}>
-              New category
-            </AppText>
-          </TVFocusable>
-        </ScrollView>
-        <View style={{flexDirection: 'row', marginTop: 16}}>
-          {renderButton({label: 'Done', onPress: onClose, primary: true})}
-        </View>
-      </>
-    );
-  };
-
   // Where titles only in the deleted category end up (see deleteCollection).
-  const watchlist = collections.find(c => c.id === DEFAULT_COLLECTION_ID);
+  const watchlist = collections.find((c) => c.id === DEFAULT_COLLECTION_ID);
   const deleteNote =
     watchlist && collection?.id !== DEFAULT_COLLECTION_ID
       ? `Titles stay in your library. Titles only in this category move to ${watchlist.name}.`
-      : 'Titles stay in your library and show under All.';
+      : "Titles stay in your library and show under All.";
 
   const renderEditor = () => {
-    const choices = iconTab === 'icons' ? LIBRARY_ICON_KEYS : LIBRARY_EMOJIS;
+    const choices = iconTab === "icons" ? LIBRARY_ICON_KEYS : LIBRARY_EMOJIS;
     const canSave = name.trim().length > 0;
     return (
       <>
-        {renderHeader(editing ? 'Edit category' : 'New category')}
-        <View style={{alignItems: 'center', flexDirection: 'row', gap: 12}}>
-          <LibraryIcon icon={icon} color={color} size={isTV ? 26 : 24} tile />
-          <TextInput
-            focusable
-            value={name}
-            onChangeText={setName}
-            maxLength={NAME_MAX_LENGTH}
-            onFocus={() => setNameFocused(true)}
-            onBlur={() => setNameFocused(false)}
-            onSubmitEditing={handleSave}
+        <div className="extensions-dialog-header">
+          <div className="library-dialog-title-row">
+            {item && (
+              <FocusableButton
+                focusKey="LIB_DLG_BACK"
+                className="extensions-dialog-close"
+                aria-label="Back to categories"
+                onClick={backOrClose}
+              >
+                <ArrowLeft size={20} />
+              </FocusableButton>
+            )}
+            <Dialog.Title>{editing ? "Edit category" : "New category"}</Dialog.Title>
+          </div>
+          <FocusableButton
+            focusKey="LIB_DLG_CLOSE"
+            className="extensions-dialog-close"
+            aria-label="Close"
+            onClick={close}
+          >
+            <X size={20} />
+          </FocusableButton>
+        </div>
+        <Dialog.Description className="sr-only">
+          Pick a name, an icon and a color for the category.
+        </Dialog.Description>
+
+        <div className="library-editor-name">
+          <LibraryIcon icon={icon} color={color} size={24} tile />
+          <FocusableInput
+            focusKey={NAME_KEY}
+            onArrowPress={direction => direction === 'down' ? focusControl(`LIB_DLG_TAB_${iconTab}`) : true}
+            wrapperClassName="extension-dialog-input library-name-input"
+            type="text"
             placeholder="Category name"
-            placeholderTextColor={colors.onSurfaceVariant}
-            selectionColor={colors.primary}
-            autoFocus={!isTV && !editing}
-            returnKeyType="done"
-            style={{
-              backgroundColor: colors.surfaceContainerHighest,
-              borderColor: nameFocused ? focusBorderColor : colors.outlineVariant,
-              borderRadius: 16,
-              borderWidth: nameFocused ? 2.5 : 1,
-              color: colors.onSurface,
-              flex: 1,
-              fontSize: 16,
-              height: isTV ? 56 : 52,
-              paddingHorizontal: 14,
+            maxLength={NAME_MAX_LENGTH}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleSave();
+              }
             }}
+            aria-label="Category name"
           />
-        </View>
+        </div>
 
-        <View style={{flexDirection: 'row', gap: 8, marginTop: 16}}>
-          {(['icons', 'emoji'] as IconTab[]).map(tab => {
-            const selected = iconTab === tab;
-            return (
-              <TVFocusable
-                key={tab}
-                accessibilityRole="tab"
-                accessibilityState={{selected}}
-                accessibilityLabel={tab === 'icons' ? 'Icons' : 'Emoji'}
-                onPress={() => setIconTab(tab)}
-                hasTVPreferredFocus={isTV && tab === 'icons'}
-                registerScreenFocus={false}
-                borderRadius={14}
-                focusScale={1.05}
-                focusBorderColor={focusBorderColor}
-                style={{
-                  alignItems: 'center',
-                  backgroundColor: selected
-                    ? colors.secondaryContainer
-                    : colors.surfaceContainerHighest,
-                  borderRadius: 14,
-                  flex: 1,
-                  height: 40,
-                  justifyContent: 'center',
-                }}>
-                <AppText
-                  role="labelLargeEmphasized"
-                  style={{
-                    color: selected
-                      ? colors.onSecondaryContainer
-                      : colors.onSurfaceVariant,
-                  }}>
-                  {tab === 'icons' ? 'Icons' : 'Emoji'}
-                </AppText>
-              </TVFocusable>
-            );
-          })}
-        </View>
+        <div className="library-icon-tabs" role="tablist">
+          {(["icons", "emoji"] as IconTab[]).map((tab) => (
+            <FocusableButton
+              key={tab}
+              focusKey={`LIB_DLG_TAB_${tab}`}
+              role="tab"
+              aria-selected={iconTab === tab}
+              className={`library-icon-tab${iconTab === tab ? " selected" : ""}`}
+              onClick={() => setIconTab(tab)}
+              onArrowPress={direction => direction === 'down'
+                ? focusControl(`LIB_DLG_ICON_${iconTab}_${Math.max(0, choices.indexOf(icon))}`)
+                : direction === 'up' ? focusControl(NAME_KEY) : true}
+            >
+              {tab === "icons" ? "Icons" : "Emoji"}
+            </FocusableButton>
+          ))}
+        </div>
 
-        <ScrollView
-          style={{
-            flexGrow: 0,
-            marginTop: 12,
-            maxHeight: Math.max(
-              iconCell * 2 + gridGap,
-              maxDialogHeight - (isTV ? 360 : 330),
-            ),
-          }}
-          contentContainerStyle={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            gap: gridGap,
-            justifyContent: 'center',
-          }}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-          {choices.map(choice => {
-            const selected = icon === choice;
-            return (
-              <TVFocusable
-                key={choice}
-                accessibilityRole="button"
-                accessibilityState={{selected}}
-                accessibilityLabel={`Icon ${choice}`}
-                onPress={() => setIcon(choice)}
-                registerScreenFocus={false}
-                borderRadius={12}
-                focusScale={1.12}
-                focusBorderColor={focusBorderColor}
-                style={{
-                  alignItems: 'center',
-                  backgroundColor: selected
-                    ? colors.secondaryContainer
-                    : 'transparent',
-                  borderColor: selected ? colors.primary : 'transparent',
-                  borderRadius: 12,
-                  borderWidth: 1.5,
-                  height: iconCell,
-                  justifyContent: 'center',
-                  width: iconCell,
-                }}>
-                <LibraryIcon
-                  icon={choice}
-                  size={isTV ? 26 : 22}
-                  glyphColor={color || colors.onSurfaceVariant}
-                />
-              </TVFocusable>
-            );
-          })}
-        </ScrollView>
+        <div ref={iconGridRef} className="library-icon-grid" role="listbox" aria-label="Icon">
+          {choices.map((choice, index) => (
+            <FocusableButton
+              key={choice}
+              focusKey={`LIB_DLG_ICON_${iconTab}_${index}`}
+              role="option"
+              aria-selected={icon === choice}
+              aria-label={`Icon ${choice}`}
+              className={`library-icon-choice${icon === choice ? " selected" : ""}`}
+              onClick={() => setIcon(choice)}
+              onArrowPress={direction => {
+                // Offscreen icons remain registered in the scrolling grid.
+                // Navigate by grid index so they cannot trap spatial focus
+                // above the colors and footer (including a partial last row).
+                const columns = iconGridRef.current
+                  ? getComputedStyle(iconGridRef.current).gridTemplateColumns.split(' ').length : 1;
+                if (direction === 'down') return index + columns < choices.length
+                  ? focusControl(`LIB_DLG_ICON_${iconTab}_${index + columns}`)
+                  : focusControl(`LIB_DLG_COLOR_${Math.max(0, [undefined, ...LIBRARY_COLORS].indexOf(color))}`);
+                if (direction === 'up') return index >= columns
+                  ? focusControl(`LIB_DLG_ICON_${iconTab}_${index - columns}`)
+                  : focusControl(`LIB_DLG_TAB_${iconTab}`);
+                if (direction === 'right' && index + 1 < choices.length) return focusControl(`LIB_DLG_ICON_${iconTab}_${index + 1}`);
+                if (direction === 'left' && index > 0) return focusControl(`LIB_DLG_ICON_${iconTab}_${index - 1}`);
+                return false;
+              }}
+            >
+              <LibraryIcon icon={choice} color={color} size={22} />
+            </FocusableButton>
+          ))}
+        </div>
 
-        <View
-          style={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            gap: isTV ? 10 : 8,
-            justifyContent: 'center',
-            marginTop: 14,
-          }}>
-          {[undefined, ...LIBRARY_COLORS].map(swatch => {
-            const selected = color === swatch;
-            const fill = swatch || colors.primaryContainer;
-            return (
-              <TVFocusable
-                key={swatch || 'default'}
-                accessibilityRole="button"
-                accessibilityState={{selected}}
-                accessibilityLabel={swatch ? `Color ${swatch}` : 'Theme color'}
-                onPress={() => setColor(swatch)}
-                registerScreenFocus={false}
-                borderRadius={14}
-                focusScale={1.15}
-                focusBorderColor={focusBorderColor}
-                style={{
-                  alignItems: 'center',
-                  backgroundColor: fill,
-                  borderColor: selected ? colors.onSurface : 'transparent',
-                  borderRadius: 14,
-                  borderWidth: 2,
-                  height: isTV ? 30 : 26,
-                  justifyContent: 'center',
-                  width: isTV ? 30 : 26,
-                }}>
-                {selected ? (
-                  <MaterialCommunityIcons
-                    name="check"
-                    size={16}
-                    color={
-                      swatch ? readableOnColor(swatch) : colors.onPrimaryContainer
-                    }
-                  />
-                ) : null}
-              </TVFocusable>
-            );
-          })}
-        </View>
+        <div className="library-color-row" role="radiogroup" aria-label="Color">
+          {[undefined, ...LIBRARY_COLORS].map((swatch, index) => (
+            <FocusableButton
+              key={swatch || "default"}
+              focusKey={`LIB_DLG_COLOR_${index}`}
+              role="radio"
+              aria-checked={color === swatch}
+              aria-label={swatch ? `Color ${swatch}` : "Theme color"}
+              className={`library-color-swatch${color === swatch ? " selected" : ""}`}
+              style={{ background: swatch || "var(--primary-container)" }}
+              onClick={() => setColor(swatch)}
+              onArrowPress={direction => {
+                if (direction === 'up') return focusControl(`LIB_DLG_ICON_${iconTab}_${choices.length - 1}`);
+                if (direction === 'down') return focusControl(editing ? 'LIB_DLG_DELETE' : 'LIB_DLG_CANCEL');
+                if (direction === 'left' && index > 0) return focusControl(`LIB_DLG_COLOR_${index - 1}`);
+                if (direction === 'right' && index < LIBRARY_COLORS.length) return focusControl(`LIB_DLG_COLOR_${index + 1}`);
+                return false;
+              }}
+            >
+              {color === swatch && <Check size={14} />}
+            </FocusableButton>
+          ))}
+        </div>
 
-        <View style={{flexDirection: 'row', gap: 10, marginTop: 18}}>
-          {editing
-            ? renderButton({
-                label: confirmDelete ? 'Confirm delete' : 'Delete',
-                onPress: handleDelete,
-                danger: true,
-              })
-            : renderButton({label: 'Cancel', onPress: handleBackOrClose})}
-          {renderButton({
-            label: editing ? 'Save' : 'Create',
-            onPress: handleSave,
-            primary: true,
-            disabled: !canSave,
-          })}
-        </View>
-        {editing && confirmDelete ? (
-          <AppText
-            role="bodySmall"
-            style={{
-              color: colors.onSurfaceVariant,
-              marginTop: 8,
-              textAlign: 'center',
-            }}>
+        {editing && confirmDelete && (
+          <p className="library-delete-hint">
             {deleteNote}
-          </AppText>
-        ) : null}
+          </p>
+        )}
+
+        <div className="extensions-dialog-actions">
+          {editing ? (
+            <FocusableButton
+              focusKey="LIB_DLG_DELETE"
+              onArrowPress={direction => direction === 'up' ? focusControl('LIB_DLG_COLOR_0') : true}
+              className="dialog-danger-button"
+              onClick={handleDelete}
+            >
+              {confirmDelete ? "Confirm delete" : "Delete"}
+            </FocusableButton>
+          ) : (
+            <FocusableButton
+              focusKey="LIB_DLG_CANCEL"
+              onArrowPress={direction => direction === 'up' ? focusControl('LIB_DLG_COLOR_0') : true}
+              className="dialog-text-button"
+              onClick={backOrClose}
+            >
+              Cancel
+            </FocusableButton>
+          )}
+          <FocusableButton
+            focusKey="LIB_DLG_SAVE"
+            onArrowPress={direction => direction === 'up' ? focusControl('LIB_DLG_COLOR_0') : true}
+            className="dialog-primary-button"
+            disabled={!canSave}
+            onClick={handleSave}
+          >
+            {editing ? "Save" : "Create"}
+          </FocusableButton>
+        </div>
       </>
     );
   };
 
   return (
-    <Modal
-      visible={visible}
-      animationType="fade"
-      transparent
-      onRequestClose={handleBackOrClose}>
-      <View
-        style={{
-          alignItems: 'center',
-          backgroundColor: 'rgba(0, 0, 0, 0.62)',
-          flex: 1,
-          justifyContent: 'center',
-          paddingBottom: Platform.OS === 'android' ? keyboardHeight : 0,
-          paddingHorizontal: 16,
-        }}>
-        <Pressable
-          focusable={false}
-          accessible={false}
-          importantForAccessibility="no"
-          style={{position: 'absolute', top: 0, bottom: 0, left: 0, right: 0}}
-          onPress={() => {
-            if (keyboardHeight > 0) {
-              Keyboard.dismiss();
-            } else {
-              onClose();
-            }
-          }}
-        />
-        <View
-          style={{
-            backgroundColor: colors.surfaceContainerHigh,
-            borderColor: colors.outlineVariant,
-            borderRadius: 28,
-            borderWidth: isTV ? 1 : 0,
-            maxHeight: maxDialogHeight,
-            padding: isTV ? 28 : 22,
-            width: dialogWidth,
-          }}>
-          {view === 'pick' ? renderPicker() : renderEditor()}
-        </View>
-      </View>
-    </Modal>
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="extensions-dialog-overlay" />
+        <DialogFocusProvider>
+          <Dialog.Content
+            ref={ref as any}
+            className="extensions-dialog-content library-dialog"
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            onCloseAutoFocus={(e) => e.preventDefault()}
+            onEscapeKeyDown={(e) => {
+              if (step === "edit" && item) {
+                e.preventDefault();
+                setStep("pick");
+              }
+            }}
+          >
+            {step === "pick" ? renderPicker() : renderEditor()}
+          </Dialog.Content>
+        </DialogFocusProvider>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 };
-
-export default LibraryCollectionDialog;

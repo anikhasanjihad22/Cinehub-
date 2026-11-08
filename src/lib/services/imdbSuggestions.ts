@@ -1,11 +1,9 @@
-import axios from 'axios';
-
 export interface IMDbSuggestion {
-  imdbId?: string;
-  poster?: string;
   title: string;
   type: 'movie' | 'tv';
   year?: number;
+  imdbId?: string;
+  poster?: string;
 }
 
 export const fetchIMDbSuggestions = async (
@@ -13,7 +11,7 @@ export const fetchIMDbSuggestions = async (
   signal?: AbortSignal,
 ): Promise<IMDbSuggestion[]> => {
   const clean = query.trim().toLowerCase();
-  if (clean.length < 2) {
+  if (clean.length < 3) {
     return [];
   }
 
@@ -23,14 +21,13 @@ export const fetchIMDbSuggestions = async (
   )}/${encodeURIComponent(clean)}.json`;
 
   try {
-    const response = await axios.get<{
-      d?: Array<{id?: string; i?: {imageUrl?: string}; l?: string; q?: string; qid?: string; y?: number}>;
-    }>(url, {
-      signal,
-      timeout: 5000,
-    });
+    const response = await fetch(url, { signal });
+    if (!response.ok) {
+      return [];
+    }
 
-    const items = response.data?.d;
+    const data = await response.json();
+    const items = data?.d;
     if (!Array.isArray(items)) {
       return [];
     }
@@ -42,7 +39,7 @@ export const fetchIMDbSuggestions = async (
       const title = item?.l?.trim();
       if (!title) continue;
 
-      const normalizedTitle = item.id || title.toLowerCase();
+      const normalizedTitle = item?.id || title.toLowerCase();
       if (seenTitles.has(normalizedTitle)) continue;
       seenTitles.add(normalizedTitle);
 
@@ -56,17 +53,17 @@ export const fetchIMDbSuggestions = async (
         q.includes('episode');
 
       suggestions.push({
-        imdbId: /^tt\d+$/.test(item.id || '') ? item.id : undefined,
-        poster: typeof item.i?.imageUrl === 'string' ? item.i.imageUrl : undefined,
         title,
         type: isTv ? 'tv' : 'movie',
         year: item?.y,
+        imdbId: /^tt\d+$/.test(item?.id || '') ? item.id : undefined,
+        poster: item?.i?.imageUrl,
       });
     }
 
     return suggestions;
   } catch (error) {
-    if (axios.isCancel(error)) {
+    if (error instanceof Error && error.name === 'AbortError') {
       return [];
     }
     console.warn('Error fetching IMDb suggestions:', error);

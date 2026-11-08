@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "norigin-spatial-navigation-react": {
+      "source": "NoriginMedia/Norigin-Spatial-Navigation",
+      "sourceType": "github",
+      "skillPath": "skills/norigin-spatial-navigation-react/SKILL.md",
+      "computedHash": "adf07712f03cf759416d5ca9be3f6d1afc4638cae6d52b26362bbce8f00139d4"
+    }
+  }
+}

@@ -1,14 +1,13 @@
-import {useEffect} from 'react';
 import useMetadataOverrideStore, {metadataOverrideKey, applyMetadataOverride} from '../zustand/metadataOverrideStore';
 import useLocalContentStore from '../zustand/localContentStore';
 import {localContentId, localContentInfo} from '../localContent/library';
 import {scanEpisodes} from '../localContent/model';
 import {listLocalFolder} from '../localContent/files';
+import {useEffect} from 'react';
 import {useQuery} from '@tanstack/react-query';
 import {providerManager} from '../services/ProviderManager';
 import {cacheStorage} from '../storage';
 import axios from 'axios';
-import {shouldShowSynopsisSkeleton} from '../synopsisLoading';
 
 const getContentInfoCacheKey = (link: string, providerValue: string) =>
   `contentInfo:${providerValue}:${link}`;
@@ -21,13 +20,12 @@ export const useContentInfo = (link: string, providerValue: string, enabled = tr
   const cacheKey = getContentInfoCacheKey(link, providerValue);
   const query = useQuery({
     queryKey: ['contentInfo', link, providerValue],
-    queryFn: async ({signal}) => {
+    queryFn: async () => {
       console.log('Fetching content info for:', link);
 
       const data = await providerManager.getMetaData({
         link,
         provider: providerValue,
-        signal,
       });
       if (!data || (!data?.title && !data?.synopsis && !data?.image)) {
         throw new Error('Error: No data returned from provider');
@@ -36,31 +34,32 @@ export const useContentInfo = (link: string, providerValue: string, enabled = tr
       return data;
     },
     enabled: enabled && !!link && !!providerValue,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
     gcTime: 60 * 60 * 1000, // 1 hour
-    retry: (count, error) => !error.message?.includes('WAF') && count < 1,
+    retry: 2,
     initialData: () => {
       if (!enabled) return undefined;
-      const cached = cacheStorage.getString(cacheKey);
+      const cached =
+        cacheStorage.getString(cacheKey) || cacheStorage.getString(link);
       if (cached) {
         try {
-          const info = JSON.parse(cached);
-          // Older builds could cache hero metadata here, which has no links.
-          return Array.isArray(info?.linkList) ? info : undefined;
+          return JSON.parse(cached);
         } catch {
           return undefined;
         }
       }
       return undefined;
     },
-    refetchOnMount: false,
+    initialDataUpdatedAt: 0,
+    refetchOnMount: 'always',
   });
 
   useEffect(() => {
     if (query.data) {
       cacheStorage.setString(cacheKey, JSON.stringify(query.data));
+      cacheStorage.setString(link, JSON.stringify(query.data));
     }
-  }, [cacheKey, query.data]);
+  }, [cacheKey, link, query.data]);
 
   return query;
 };
@@ -92,7 +91,7 @@ export const useEnhancedMetadata = (
       }
     },
     enabled: enabled && !!imdbId && !!type,
-    staleTime: 60 * 60 * 1000,
+    staleTime: 0, // Instantly revalidate in background
     gcTime: 2 * 60 * 60 * 1000, // 2 hours
     retry: 1, // Don't retry too much for external API
     initialData: () => {
@@ -110,7 +109,8 @@ export const useEnhancedMetadata = (
       }
       return undefined;
     },
-    refetchOnMount: false,
+    initialDataUpdatedAt: 0,
+    refetchOnMount: 'always',
   });
 
   useEffect(() => {
@@ -149,40 +149,33 @@ export const useContentDetails = (link: string, providerValue: string) => {
     isFetching: enhancedMetaFetching,
     refetch: refetchMeta,
   } = useEnhancedMetadata(imdbId, contentType, shouldPopulateMeta);
-  const meta = manualMetadata ? {...manualMetadata, name: manualMetadata.title, imdbRating: manualMetadata.rating} : shouldPopulateMeta ? enhancedMeta : null;
+  const meta = manualMetadata ? {...manualMetadata, name: manualMetadata.title, imdbRating: manualMetadata.rating, genre: manualMetadata.genres} : shouldPopulateMeta ? enhancedMeta : null;
   const metaLoading = shouldPopulateMeta && enhancedMetaLoading;
   const metaFetching = shouldPopulateMeta && enhancedMetaFetching;
 
-  if (localId) {
-    return {
-      info: localTitle ? localContentInfo(localTitle) : undefined,
-      meta: localTitle?.metadata ? {...localTitle.metadata, name: localTitle.metadata.title,
-        imdbRating: localTitle.metadata.rating} : null,
-      localTitle,
-      isLoading: false, isMetaLoading: false, isRefetching: false, isSynopsisLoading: false,
-      error: localTitle ? null : new Error('This local title is no longer imported'),
-      refetch: async () => {
-        if (!localTitle) return;
-        const episodes = await scanEpisodes(localTitle.folderUri, listLocalFolder, undefined, !localTitle.rootFilesOnly);
-        useLocalContentStore.getState().saveTitles([{...localTitle, episodes}]);
-      },
-    };
-  }
+  if (localId) return {
+    info: localTitle ? localContentInfo(localTitle) : undefined,
+    meta: localTitle?.metadata ? {
+      ...localTitle.metadata, name: localTitle.metadata.title,
+      imdbRating: localTitle.metadata.rating, genre: localTitle.metadata.genres,
+    } : null,
+    localTitle,
+    isLoading: false,
+    isRefetching: false,
+    error: localTitle ? null : new Error('This local title is no longer in the library.'),
+    refetch: async () => {
+      if (!localTitle) return;
+      const episodes = await scanEpisodes(localTitle.folderUri, listLocalFolder, undefined, !localTitle.rootFilesOnly);
+      useLocalContentStore.getState().saveTitles([{...localTitle, episodes}]);
+    },
+  };
+
   return {
     localTitle: undefined,
     info,
     meta,
-    isLoading: infoLoading,
-    isMetaLoading: metaLoading,
+    isLoading: infoLoading || metaLoading,
     isRefetching: infoFetching || metaFetching,
-    isSynopsisLoading: shouldShowSynopsisSkeleton({
-      enhancedSynopsis: meta?.description,
-      providerSynopsis: info?.synopsis,
-      infoLoading,
-      infoFetching,
-      metaLoading,
-      metaFetching,
-    }),
     error: infoError,
     refetch: async () => {
       await refetchInfo();

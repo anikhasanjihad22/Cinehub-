@@ -1,13 +1,13 @@
-import type {EpisodeLink} from './providers/types';
-import type {ProviderMetadata} from './zustand/metadataOverrideStore';
-import {parseEpisodeName} from './localContent/model';
+import type { EpisodeLink } from "./providers/types";
+import type { ProviderMetadata } from "./zustand/metadataOverrideStore";
+import { parseEpisodeName } from "./localContent/model";
 
 export function applyProviderEpisodeMetadata<T extends EpisodeLink>(
   episode: T,
   seasonTitle: string,
   metadata?: ProviderMetadata,
 ): T {
-  if (!metadata?.useEpisodeMetadata || metadata.type !== 'series')
+  if (!metadata?.useEpisodeMetadata || metadata.type !== "series")
     return episode;
   const seasonMatch =
     seasonTitle.match(/(?:^|[^a-z0-9])(?:season[ ._-]*|s)(\d{1,3})(?!\d)/i) ||
@@ -25,10 +25,12 @@ export function applyProviderEpisodeMetadata<T extends EpisodeLink>(
   )
     return episode;
   // Fractional/split episodes must not be silently matched to an integer episode.
-  if (/(?:e|episode\s*|ep\s*|^\s*)\d+\.\d{1,2}(?!\d)(?:\D|$)/i.test(episode.title))
+  if (
+    /(?:e|episode\s*|ep\s*|^\s*)\d+\.\d{1,2}(?!\d)(?:\D|$)/i.test(episode.title)
+  )
     return episode;
   const matched = metadata.videos?.find(
-    video => video.season === season && video.episode === number,
+    (video) => video.season === season && video.episode === number,
   );
   if (!matched) return episode;
   return {

@@ -19,7 +19,7 @@ export const useEpisodes = (
 
   const query = useQuery<EpisodeLink[], Error>({
     queryKey: ['episodes', episodesLink, providerValue],
-    queryFn: async ({signal}) => {
+    queryFn: async () => {
       if (!episodesLink || !providerValue || !enabled) {
         return [];
       }
@@ -39,7 +39,6 @@ export const useEpisodes = (
       const episodes = await providerManager.getEpisodes({
         url: episodesLink,
         providerValue: providerValue,
-        signal,
       });
 
       return episodes || [];
@@ -47,8 +46,7 @@ export const useEpisodes = (
     enabled: enabled && !!episodesLink && !!providerValue,
     staleTime: 0,
     gcTime: 60 * 60 * 1000, // 1 hour (was cacheTime)
-    retry: (failureCount, error) => {
-      if (error.message?.includes('WAF')) return false;
+    retry: (failureCount, _error) => {
       // Don't retry on provider/network errors
       if (failureCount >= 2) {
         return false;
@@ -94,7 +92,6 @@ export const useStreamData = () => {
     link: string,
     type: string,
     providerValue: string,
-    options?: {signal?: AbortSignal; isDownload?: boolean},
   ) => {
     const controller = new AbortController();
 
@@ -102,9 +99,8 @@ export const useStreamData = () => {
       const stream = await providerManager.getStream({
         link,
         type,
-        signal: options?.signal ?? controller.signal,
+        signal: controller.signal,
         providerValue,
-        isDownload: options?.isDownload,
       });
 
       return stream || [];

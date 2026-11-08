@@ -1,106 +1,40 @@
-import React, {useEffect, useState} from 'react';
-import {Text, TouchableOpacity, View} from 'react-native';
-import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
-import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import usePartyStore, {type PartyReaction} from '../lib/watchParty/watchParty';
-import {isTV} from '../lib/tv';
+// @ts-nocheck
+import {useEffect, useState} from 'react';
+import {LuUsers} from 'react-icons/lu';
+import usePartyStore from '../lib/watchParty/watchParty';
 
 const EMOJIS = ['❤️', '😂', '😮', '👏', '🔥'];
 
-const FloatingReaction = ({reaction}: {reaction: PartyReaction}) => {
+const Floating = ({id, emoji, name}: {id: string; emoji: string; name: string}) => {
   const drop = usePartyStore(s => s.dropReaction);
-  const p = useSharedValue(0);
-  const [x] = useState(() => 8 + Math.random() * 40);
+  const [right] = useState(() => 8 + Math.random() * 40);
   useEffect(() => {
-    p.value = withTiming(1, {duration: 2600, easing: Easing.out(Easing.quad)});
-    const t = setTimeout(() => drop(reaction.id), 2700);
+    const t = setTimeout(() => drop(id), 2700);
     return () => clearTimeout(t);
-  }, [drop, p, reaction.id]);
-  const style = useAnimatedStyle(() => ({
-    opacity: 1 - p.value,
-    transform: [{translateY: -p.value * 220}, {scale: 1 + p.value * 0.3}],
-  }));
+  }, [id, drop]);
   return (
-    <Animated.View
-      pointerEvents="none"
-      style={[{position: 'absolute', bottom: 0, right: x, alignItems: 'center'}, style]}>
-      <Text style={{fontSize: 34}}>{reaction.emoji}</Text>
-      <Text style={{color: '#fff', fontSize: 10, opacity: 0.85}}>{reaction.name}</Text>
-    </Animated.View>
+    <div className="party-react" style={{right}}>
+      <div style={{fontSize: 34}}>{emoji}</div>
+      <div style={{fontSize: 10}}>{name}</div>
+    </div>
   );
 };
 
 /** In-player Watch Together pill: who is here, quick reactions. */
-const PartyOverlay = () => {
+export const PartyOverlay = () => {
   const code = usePartyStore(s => s.code);
   const members = usePartyStore(s => s.members);
   const reactions = usePartyStore(s => s.reactions);
   const sendReaction = usePartyStore(s => s.sendReaction);
   const [open, setOpen] = useState(false);
-
-  if (!code) {
-    return null;
-  }
+  if (!code) return null;
   return (
-    <View
-      pointerEvents="box-none"
-      style={{position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 300}}>
-      <View
-        pointerEvents="none"
-        style={{position: 'absolute', right: 20, bottom: 90, width: 90, height: 260}}>
-        {reactions.map(r => (
-          <FloatingReaction key={r.id} reaction={r} />
-        ))}
-      </View>
-      {!isTV && (
-        <View style={{position: 'absolute', left: 12, top: '38%', alignItems: 'flex-start'}}>
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Watch together reactions"
-            onPress={() => setOpen(o => !o)}
-            activeOpacity={0.8}
-            style={{
-              alignItems: 'center',
-              backgroundColor: 'rgba(0,0,0,0.55)',
-              borderRadius: 18,
-              flexDirection: 'row',
-              gap: 6,
-              paddingHorizontal: 10,
-              paddingVertical: 6,
-            }}>
-            <MaterialCommunityIcons name="account-group" size={18} color="#fff" />
-            <Text style={{color: '#fff', fontSize: 13, fontWeight: '800'}}>{members.length}</Text>
-          </TouchableOpacity>
-          {open && (
-            <View
-              style={{
-                backgroundColor: 'rgba(0,0,0,0.6)',
-                borderRadius: 22,
-                flexDirection: 'row',
-                gap: 4,
-                marginTop: 8,
-                paddingHorizontal: 6,
-                paddingVertical: 4,
-              }}>
-              {EMOJIS.map(e => (
-                <TouchableOpacity
-                  key={e}
-                  onPress={() => sendReaction(e)}
-                  style={{paddingHorizontal: 5, paddingVertical: 2}}>
-                  <Text style={{fontSize: 24}}>{e}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </View>
-      )}
-    </View>
+    <div className="party-layer">
+      <div className="party-reactions">{reactions.map(r => <Floating key={r.id} {...r} />)}</div>
+      <div className="party-box">
+        <button className="party-pill" onClick={() => setOpen(o => !o)} title="Watch Together"><LuUsers size={16} /> {members.length}</button>
+        {open && <div className="party-emoji">{EMOJIS.map(e => <button key={e} onClick={() => sendReaction(e)}>{e}</button>)}</div>}
+      </div>
+    </div>
   );
 };
-
-export default PartyOverlay;

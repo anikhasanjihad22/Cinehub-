@@ -1,8 +1,8 @@
-import type {Info} from '../providers/types';
-import type {WatchListItem} from '../storage/WatchListStorage';
-import type {LocalTitle} from './model';
+import type { Info } from "../providers/types";
+import type { WatchListItem } from "../storage/WatchListStorage";
+import type { LocalTitle } from "./model";
 
-const PREFIX = 'cinehub-local:';
+const PREFIX = "vega-local:";
 export const localContentLink = (id: string) =>
   `${PREFIX}${encodeURIComponent(id)}`;
 export function localContentId(link: string): string | undefined {
@@ -15,26 +15,28 @@ export function localContentId(link: string): string | undefined {
 }
 export const localLibraryItem = (title: LocalTitle): WatchListItem => ({
   title: title.metadata?.title || title.name,
-  poster: title.metadata?.poster || '',
+  poster: title.metadata?.poster || "",
   link: localContentLink(title.id),
-  provider: 'local',
+  provider: "local",
   collections: title.collections,
 });
 
 export const localContentInfo = (title: LocalTitle): Info => ({
   title: title.metadata?.title || title.name,
-  image: title.metadata?.background || title.metadata?.poster || '',
+  image: title.metadata?.background || title.metadata?.poster || "",
   poster: title.metadata?.poster,
   logo: title.metadata?.logo,
-  synopsis: title.metadata?.description || '',
+  synopsis: title.metadata?.description || "",
   imdbId: title.metadata?.imdbId,
   type:
     title.metadata?.type ||
     (title.episodes.length === 1 && title.episodes[0].episode === undefined
-      ? 'movie'
-      : 'series'),
+      ? "movie"
+      : "series"),
   tags: title.metadata?.genres,
   rating: title.metadata?.rating,
+  year: title.metadata?.year,
+  runtime: title.metadata?.runtime,
   populateMeta: false,
   linkList: [],
 });

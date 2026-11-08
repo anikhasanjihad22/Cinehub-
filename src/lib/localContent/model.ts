@@ -14,7 +14,7 @@ export interface LocalEpisode {
 
 export interface LocalMetadata {
   imdbId: string;
-  type: 'movie' | 'series';
+  type: "movie" | "series";
   title: string;
   poster?: string;
   background?: string;
@@ -53,13 +53,13 @@ export const isVideoFile = (name: string) =>
 
 export function parseEpisodeName(
   name: string,
-  folder = '',
-): {season?: number; episode?: number} {
+  folder = "",
+): { season?: number; episode?: number } {
   const explicit =
     name.match(/(?:^|[^a-z0-9])s(\d{1,3})[ ._-]*e(\d{1,4})(?!\d)/i) ||
     name.match(/(?:^|[^a-z0-9])(\d{1,3})x(\d{1,4})(?!\d)/i);
   if (explicit)
-    return {season: Number(explicit[1]), episode: Number(explicit[2])};
+    return { season: Number(explicit[1]), episode: Number(explicit[2]) };
   const seasonMatch = folder.match(
     /(?:^|[/ ._-])(?:season[ ._-]*|s)(\d{1,3})(?!\d)/i,
   );
@@ -73,7 +73,7 @@ export function parseEpisodeName(
 }
 
 export const naturalCompare = (a: string, b: string) =>
-  a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'});
+  a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 
 export async function scanEpisodes(
   uri: string,
@@ -83,9 +83,9 @@ export async function scanEpisodes(
 ): Promise<LocalEpisode[]> {
   const episodes: LocalEpisode[] = [];
   const visited = new Set<string>();
-  const pending = [{uri, folder: ''}];
+  const pending = [{ uri, folder: "" }];
   while (pending.length) {
-    if (signal?.aborted) throw new Error('Import cancelled');
+    if (signal?.aborted) throw new Error("Import cancelled");
     const current = pending.shift()!;
     if (visited.has(current.uri)) continue;
     visited.add(current.uri);
@@ -95,13 +95,13 @@ export async function scanEpisodes(
         if (!recursive) continue;
         pending.push({
           uri: entry.uri,
-          folder: [current.folder, entry.name].filter(Boolean).join('/'),
+          folder: [current.folder, entry.name].filter(Boolean).join("/"),
         });
       } else if (isVideoFile(entry.name)) {
         episodes.push({
           uri: entry.uri,
           name: entry.name,
-          folder: current.folder || 'Default',
+          folder: current.folder || "Default",
           ...parseEpisodeName(entry.name, current.folder),
         });
       }
@@ -114,7 +114,7 @@ export async function scanEpisodes(
 }
 
 export async function prepareLocalImport(
-  root: {uri: string; name: string},
+  root: { uri: string; name: string },
   bulk: boolean,
   list: (uri: string) => Promise<LocalEntry[]>,
   existing: LocalTitle[],
@@ -124,21 +124,21 @@ export async function prepareLocalImport(
   const entries = bulk ? await list(root.uri) : [];
   const folders = bulk
     ? entries
-        .filter(e => e.directory)
+        .filter((e) => e.directory)
         .sort((a, b) => naturalCompare(a.name, b.name))
     : [root];
   const titles: LocalTitle[] = [];
-  if (bulk && entries.some(e => !e.directory && isVideoFile(e.name))) {
+  if (bulk && entries.some((e) => !e.directory && isVideoFile(e.name))) {
     const episodes = entries
-      .filter(e => !e.directory && isVideoFile(e.name))
-      .map(e => ({
+      .filter((e) => !e.directory && isVideoFile(e.name))
+      .map((e) => ({
         uri: e.uri,
         name: e.name,
-        folder: 'Default',
+        folder: "Default",
         ...parseEpisodeName(e.name),
       }))
       .sort((a, b) => naturalCompare(a.name, b.name));
-    const previous = existing.find(t => t.folderUri === root.uri);
+    const previous = existing.find((t) => t.folderUri === root.uri);
     titles.push({
       id: root.uri,
       rootUri: root.uri,
@@ -152,11 +152,11 @@ export async function prepareLocalImport(
     });
   }
   for (const folder of folders) {
-    if (signal?.aborted) throw new Error('Import cancelled');
+    if (signal?.aborted) throw new Error("Import cancelled");
     onProgress?.(folder.name);
     const episodes = await scanEpisodes(folder.uri, list, signal);
     if (!episodes.length) continue;
-    const previous = existing.find(t => t.folderUri === folder.uri);
+    const previous = existing.find((t) => t.folderUri === folder.uri);
     titles.push({
       id: folder.uri,
       rootUri: root.uri,
@@ -176,13 +176,13 @@ export function getEpisodeLabel(
   title: LocalTitle,
 ): string {
   if (!title.useMetadataTitles) return episode.name;
-  if (title.metadata?.type === 'movie' && title.metadata.title.trim()) {
-    return 'Movie';
+  if (title.metadata?.type === "movie" && title.metadata.title.trim()) {
+    return "Movie";
   }
   if (episode.season === undefined || episode.episode === undefined)
     return episode.name;
   const matched = title.metadata?.videos?.find(
-    v => v.season === episode.season && v.episode === episode.episode,
+    (v) => v.season === episode.season && v.episode === episode.episode,
   );
   return matched?.title
     ? `S${episode.season} E${episode.episode} · ${matched.title}`
@@ -191,7 +191,7 @@ export function getEpisodeLabel(
 
 export const cleanFolderQuery = (name: string) =>
   name
-    .replace(/[._]/g, ' ')
-    .replace(/\[[^\]]*\]/g, '')
-    .replace(/\b(?:19|20)\d{2}\b.*$/, '')
+    .replace(/[._]/g, " ")
+    .replace(/\[[^\]]*\]/g, "")
+    .replace(/\b(?:19|20)\d{2}\b.*$/, "")
     .trim();

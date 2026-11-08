@@ -1,64 +1,34 @@
-# CineHub
+# CineHub Desktop
 
-Movies & shows app for **Android phones and Android TV** (one APK).
+CineHub for Windows, macOS and Linux (Tauri + React). Same account, servers,
+TMDB home, Live TV and Watch Together as the Android and TV apps.
 
-- Email sign-up / sign-in with **Supabase**, user profiles
-- **Admin panel** inside the app: add your provider sources; users only ever see
-  your labels ("Server 1", "Server 2" …) – never the provider names
-- Netflix-style animated sign-in / sign-up, full D-pad support for TV
-- No in-app update check or update notifications
+## Get the installers (no PC setup needed)
 
-## 1. Supabase (once)
+Push this repo to GitHub. The **Build CineHub Desktop** workflow runs on
+Windows, macOS and Linux. When it finishes, open **Actions → the run →
+Artifacts** and download:
 
-1. Dashboard → **SQL Editor** → paste `supabase/schema.sql` → **Run**
-2. Dashboard → **Authentication → Providers → Email**: enabled.
-   (Optional: turn **Confirm email** off if you want instant sign-in after sign-up.)
-3. Open the app, **sign up with your email**.
-4. Back in SQL Editor, make yourself admin:
+- `CineHub-windows-latest` → the `.exe` installer
+- `CineHub-macos-latest` → the `.dmg`
+- `CineHub-ubuntu-22.04` → `.deb`, `.rpm` and `.AppImage`
 
-   ```sql
-   update public.profiles set role = 'admin' where email = 'YOUR_EMAIL@example.com';
-   ```
-5. Re-open the app → **Settings → Account → Admin Panel** → *Add server*.
+## Build on your own PC
 
-The project URL and **publishable** key are already set in `app.config.js`
-(override with `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` env vars). Never put the
-`service_role` / secret key in the app.
+    npm install
+    npm run tauri dev      # run
+    npm run tauri build    # installers in src-tauri/target/release/bundle
 
-## 2. Build the APK (GitHub Actions)
+Needs Node 20+, Rust (stable) and the Tauri prerequisites for your OS.
 
-```bash
-unzip cinehub-app.zip && cd cinehub-app
-npm install                      # also creates package-lock.json with the new deps
-git init && git add . && git commit -m "CineHub"
-git branch -M main
-git remote add origin https://github.com/<you>/<repo>.git
-git push -u origin main
-```
+## What CineHub changes compared with the original
 
-Then GitHub → **Actions → Build CineHub APK → Run workflow**.
-The APK appears under the run's **Artifacts** and under **Releases**.
-
-### Keep the same signing key (so updates install over old versions)
-
-```bash
-keytool -genkeypair -v -keystore cinehub.keystore -alias cinehub \
-  -keyalg RSA -keysize 2048 -validity 10000
-base64 -w0 cinehub.keystore        # copy the output
-```
-Repo → Settings → Secrets and variables → Actions → add:
-`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` (cinehub), `KEY_PASSWORD`.
-Keep `cinehub.keystore` safe and never commit it.
-
-## 3. Local dev
-
-```bash
-npm install
-npm run android        # phone
-npm run android:tv     # Android TV
-```
-
-## License
-
-See `LICENSE` / `NOTICE` — the upstream code is under the PolyForm Noncommercial
-License. Keep those files with the source.
+- Sign in / sign up / forgot password with an emailed code (Supabase)
+- Opening animation on every launch, poster wall on the sign-in screen
+- Servers are managed by the admin (Supabase table `cinehub_servers`)
+- Home rows come from TMDB using the admin's key
+- Live TV tab (links added by the admin in the phone app's admin panel)
+- Watch Together (works with the phone and TV apps)
+- First 5 seconds of every video (not Live TV) play without sound
+- Provider website / verification windows are blocked
+- No Web or Explore buttons, no update checker, no GitHub links

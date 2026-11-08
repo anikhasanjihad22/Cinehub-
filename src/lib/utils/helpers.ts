@@ -2,16 +2,7 @@ import {ProviderSource} from '../storage/extensionStorage';
 
 export const formatName = (name: string): string => {
   // Replace special characters with an underscore
-  return name.replaceAll(/[^a-zA-Z0-9]/g, '_');
-};
-
-export const sanitizeSearchQuery = (text: string): string => {
-  return text
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return name.replace(/[^a-zA-Z0-9]/g, '_');
 };
 
 const DEFAULT_REPO_NAME = 'vega-providers';
@@ -21,6 +12,10 @@ const GITHUB_HOST = 'github.com';
 const CODEBERG_HOST = 'codeberg.org';
 const BITBUCKET_HOST = 'bitbucket.org';
 const GITLAB_HOST = 'gitlab.com';
+
+export const normalizeUrl = (url: string): string => {
+  return url.trim().replace(/\/+$/, '');
+};
 
 type SourceHost = 'github' | 'codeberg' | 'bitbucket' | 'gitlab';
 

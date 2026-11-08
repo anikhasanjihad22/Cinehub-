@@ -13,9 +13,9 @@ export function validateProviderModuleVersion(
   fileName: string,
 ): boolean {
   const prefix = code.slice(0, 512);
-  const header = /^\uFEFF?\/\/ @(?:vega|cinehub)-provider ([A-Za-z0-9_.-]+)\r?\n\/\/ @(?:vega|cinehub)-version ([A-Za-z0-9_.+-]+)(?:\r?\n|$)/.exec(prefix);
+  const header = /^\uFEFF?\/\/ @vega-provider ([A-Za-z0-9_.-]+)\r?\n\/\/ @vega-version ([A-Za-z0-9_.+-]+)(?:\r?\n|$)/.exec(prefix);
   if (!header) {
-    if (/@(?:vega|cinehub)-(?:provider|version)\b/.test(prefix)) {
+    if (/@vega-(?:provider|version)\b/.test(prefix)) {
       throw new ProviderVersionMismatchError(fileName, 'has a missing or invalid version header');
     }
     return false;

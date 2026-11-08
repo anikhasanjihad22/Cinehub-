@@ -1,80 +1,51 @@
-import axios from 'axios';
-import {mainStorage} from './storage/StorageService';
+// @ts-nocheck
 import {supabase} from './supabase';
-import {resolveTmdbKey} from './zustand/remoteConfigStore';
+import {peekTmdbKey} from './services/remoteConfig';
 
-const CACHE_KEY = 'login-posters-v1';
-const MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const CACHE_KEY = 'cinehub:loginPosters';
+const MAX_AGE = 12 * 60 * 60 * 1000;
 const IMG = 'https://image.tmdb.org/t/p/w342';
 
-interface Cache {
-  at: number;
-  urls: string[];
-}
-
-const read = (): Cache | null => {
+const read = (): {at: number; urls: string[]} | null => {
   try {
-    const raw = mainStorage.getString(CACHE_KEY);
-    return raw ? (JSON.parse(raw) as Cache) : null;
+    return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
   } catch {
     return null;
   }
 };
 
-/** Posters saved from the last refresh; available before anyone signs in. */
-export const getCachedLoginPosters = (): string[] => read()?.urls ?? [];
+export const getCachedLoginPosters = (): string[] => (read() && read()!.urls) || [];
 
-/**
- * Pulls trending posters from TMDB with the admin's key and keeps them for the
- * sign-in backdrop. Without a key (very first launch) it does nothing and the
- * backdrop falls back to plain tiles until the next sign-in.
- */
+/** Trending posters for the sign-in backdrop; cached so they show before login. */
 export const refreshLoginPosters = async (): Promise<string[]> => {
   const cached = read();
-  if (cached && Date.now() - cached.at < MAX_AGE_MS && cached.urls.length >= 12) {
-    return cached.urls;
-  }
-  let apiKey = resolveTmdbKey();
-  if (!apiKey) {
-    // First launch, before sign-in: only works once migration-v3.sql is run.
+  if (cached && Date.now() - cached.at < MAX_AGE && cached.urls.length >= 12) return cached.urls;
+  let key = peekTmdbKey();
+  if (!key) {
     try {
       const {data} = await supabase.rpc('get_public_tmdb_key');
-      apiKey = typeof data === 'string' ? data.trim() : '';
+      key = typeof data === 'string' ? data.trim() : '';
     } catch {
-      apiKey = '';
+      key = '';
     }
   }
-  if (!apiKey) {
-    return cached?.urls ?? [];
-  }
+  if (!key) return (cached && cached.urls) || [];
   try {
-    const paths = ['/trending/all/week', '/movie/popular', '/tv/popular'];
     const pages = await Promise.all(
-      paths.map(p =>
-        axios
-          .get(`https://api.themoviedb.org/3${p}`, {
-            params: {api_key: apiKey, language: 'en-US'},
-            timeout: 12000,
-          })
-          .then(r => (r.data?.results ?? []) as Array<{poster_path?: string | null}>)
+      ['/trending/all/week', '/movie/popular', '/tv/popular'].map(p =>
+        fetch(`https://api.themoviedb.org/3${p}?api_key=${key}&language=en-US`)
+          .then(r => r.json())
+          .then(j => j.results || [])
           .catch(() => []),
       ),
     );
-    const urls = Array.from(
-      new Set(
-        pages
-          .flat()
-          .map(r => r.poster_path)
-          .filter((p): p is string => !!p)
-          .map(p => `${IMG}${p}`),
-      ),
-    ).slice(0, 48);
+    const urls = Array.from(new Set(pages.flat().map((r: any) => r.poster_path).filter(Boolean).map((p: string) => `${IMG}${p}`))).slice(0, 48);
     if (urls.length >= 12) {
-      mainStorage.setString(CACHE_KEY, JSON.stringify({at: Date.now(), urls}));
+      localStorage.setItem(CACHE_KEY, JSON.stringify({at: Date.now(), urls}));
       return urls;
     }
   } catch {
-    // keep the old posters
+    // keep old
   }
-  return cached?.urls ?? [];
+  return (cached && cached.urls) || [];
 };

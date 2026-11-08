@@ -1,5 +1,4 @@
 import {create} from 'zustand';
-import {dismissWafOperations, wafCancelledError} from '../services/wafSession';
 import type {
   OpenWebViewOptions,
   OpenWebViewResult,
@@ -15,6 +14,7 @@ export interface WafRequest extends OpenWebViewOptions {
   url: string;
   /** Source author of the provider; the solved cookies go to its jar. */
   author: string;
+  signal?: AbortSignal;
   resolve: (result: OpenWebViewResult) => void;
   reject: (error: Error) => void;
 }
@@ -26,14 +26,13 @@ interface WafState {
   enqueue: (request: Omit<WafRequest, 'id'>) => number;
   // Remove a request (after it has been settled).
   remove: (id: number) => void;
-  cancelAll: () => void;
 }
 
 let idCounter = 0;
 
 /**
  * Global store used to drive the WAF WebView dialog from non-React code */
-export const useWafStore = create<WafState>((set, get) => ({
+export const useWafStore = create<WafState>(set => ({
   requests: [],
   enqueue: request => {
     const id = ++idCounter;
@@ -42,12 +41,4 @@ export const useWafStore = create<WafState>((set, get) => ({
   },
   remove: id =>
     set(state => ({requests: state.requests.filter(r => r.id !== id)})),
-  cancelAll: () => {
-    // Block before rejecting: provider catch/retry handlers may request another
-    // window as soon as their outstanding promise rejects.
-    dismissWafOperations();
-    const requests = get().requests;
-    set({requests: []});
-    requests.forEach(request => request.reject(wafCancelledError()));
-  },
 }));

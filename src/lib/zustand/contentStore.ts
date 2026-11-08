@@ -1,12 +1,7 @@
 import {create} from 'zustand';
 import {persist, createJSONStorage} from 'zustand/middleware';
-import {MMKVLoader} from 'react-native-mmkv-storage';
 // import {ProvidersList, providersList} from '../constants';
 import {extensionStorage, ProviderExtension} from '../storage/extensionStorage';
-import {settingsStorage} from '../storage/SettingsStorage';
-import {sortInstalledProviders} from '../providerOrder';
-
-const storage = new MMKVLoader().initialize();
 
 export interface Content {
   provider: ProviderExtension;
@@ -31,25 +26,22 @@ const useContentStore = create<Content>()(
         disabled: false,
         version: '0.0.1',
         icon: '',
-        source: {author: '', url: ''},
         installedAt: 0,
         lastUpdated: 0,
+        source: { author: '', url: '' }
       },
-      installedProviders: sortInstalledProviders(
-        extensionStorage.getInstalledProviders(),
-        settingsStorage.getProviderOrder(),
-      ),
+      installedProviders: extensionStorage
+        .getInstalledProviders()
+        .sort((a, b) => a.display_name.localeCompare(b.display_name)),
       availableProviders: [],
       activeExtensionProvider: null,
 
       setProvider: (provider: ProviderExtension) => set({provider}),
 
-      // Kept in the order the user dragged them to in the provider drawer.
       setInstalledProviders: (providers: ProviderExtension[]) =>
         set({
-          installedProviders: sortInstalledProviders(
-            providers,
-            settingsStorage.getProviderOrder(),
+          installedProviders: providers.sort((a, b) =>
+            a.display_name.localeCompare(b.display_name),
           ),
         }),
 
@@ -61,7 +53,7 @@ const useContentStore = create<Content>()(
     }),
     {
       name: 'content-storage',
-      storage: createJSONStorage(() => storage as any), // Only persist certain fields
+      storage: createJSONStorage(() => localStorage), // Only persist certain fields
       partialize: state => ({
         provider: state.provider,
         activeExtensionProvider: state.activeExtensionProvider,

@@ -1,37 +1,30 @@
 import {ProviderVersionMismatchError, validateProviderModuleVersion, validateProviderModuleSet} from './providerVersion';
-import axios from 'axios';
+import axios from "axios";
+import { platformAxiosAdapter } from "../../platform/network";
 import {
   extensionStorage,
   ProviderExtension,
   ProviderModule,
   ProviderSource,
-} from '../storage/extensionStorage';
-import {mainStorage} from '../storage/StorageService';
+} from "../storage/extensionStorage";
+import { mainStorage } from "../storage/StorageService";
+import {parseProviderIntegrity, verifyProviderModule, type ProviderIntegrity} from './providerIntegrity';
+import { sourceTokenStorage } from "../storage/sourceTokenStorage";
 import {
-  getSourceAuthHeaders,
-  sourceTokenStorage,
-} from '../storage/sourceTokenStorage';
+  getSourceRequestHeaders,
+  validateSourceTransport,
+  throwIfRateLimited,
+  throwIfSourceForbidden,
+} from "./sourceRequests";
+export { isRateLimitError, throwIfRateLimited } from "./sourceRequests";
 import {
   createProviderSource,
   getProviderFilesUrl,
   isValidProviderPath,
-} from '../utils/helpers';
-
-export const isRateLimitError = (error: unknown): boolean => {
-  if (!error) return false;
-  const status =
-    (error as any)?.response?.status ??
-    (error as any)?.status;
-  if (status === 403 || status === 429) {
-    return true;
-  }
-  const msg = String((error as any)?.message || "").toLowerCase();
-  return msg.includes("rate limit") || msg.includes("status code 403") || msg.includes("status code 429");
-};
+} from "../utils/helpers";
 
 // A private source answers 401, 403 or 404 when its token is wrong, expired
-// or has no access. Check this before throwIfRateLimited, which reads 403 as
-// a rate limit.
+// or has no access. Check this before reporting other source errors.
 const throwIfSourceAccessDenied = (error: unknown, author: string): void => {
   const status = (error as any)?.response?.status;
   if (
@@ -39,18 +32,11 @@ const throwIfSourceAccessDenied = (error: unknown, author: string): void => {
     (status === 401 || status === 403 || status === 404)
   ) {
     throw new Error(
-      'Cannot access this private source. Check that the access token is valid and has read access.',
+      "Cannot access this private source. Check that the access token is valid and has read access.",
     );
   }
 };
 
-export const throwIfRateLimited = (error: unknown): void => {
-  if (isRateLimitError(error)) {
-    throw new Error(
-      'GitHub API rate limit exceeded. Please wait a few minutes before trying again.',
-    );
-  }
-};
 /**
  * Extension manager service for handling dynamic provider loading
  */
@@ -65,10 +51,10 @@ const isNewerInstalledVersion = (installed: string, requested: string): boolean 
 
 export class ExtensionManager {
   private static instance: ExtensionManager;
-  private readonly legacyCustomProviderBaseUrlKey = 'customProviderBaseUrl';
+  private readonly legacyCustomProviderBaseUrlKey = "customProviderBaseUrl";
 
   private testMode = false;
-  private baseUrlTestMode = '';
+  private baseUrlTestMode = "http://localhost:3001";
 
   private getManifest = (url: string) => {
     return `${url}/manifest.json`;
@@ -81,9 +67,9 @@ export class ExtensionManager {
       if (!source.manifestUrl) {
         const stored = extensionStorage
           .getProviderSources()
-          .find(s => s.author === source.author);
+          .find((s) => s.author === source.author);
         if (stored?.manifestUrl) {
-          return {...source, manifestUrl: stored.manifestUrl};
+          return { ...source, manifestUrl: stored.manifestUrl };
         }
       }
       return source;
@@ -98,7 +84,7 @@ export class ExtensionManager {
     }
 
     const legacyValue =
-      mainStorage.getString(this.legacyCustomProviderBaseUrlKey)?.trim() || '';
+      mainStorage.getString(this.legacyCustomProviderBaseUrlKey)?.trim() || "";
     if (!legacyValue) {
       return;
     }
@@ -109,7 +95,7 @@ export class ExtensionManager {
       extensionStorage.setDefaultProviderSource(source.author);
 
       const installedProviders = extensionStorage.getInstalledProviders();
-      const migratedInstalledProviders = installedProviders.map(provider => {
+      const migratedInstalledProviders = installedProviders.map((provider) => {
         if (provider.source?.author && provider.source?.url) {
           return provider;
         }
@@ -124,20 +110,20 @@ export class ExtensionManager {
       });
 
       extensionStorage.setInstalledProviders(migratedInstalledProviders);
-      console.log('Migrated customProviderBaseUrl to provider source');
+      console.log("Migrated customProviderBaseUrl to provider source");
     } catch (error) {
-      console.warn('Failed to migrate customProviderBaseUrl:', error);
+      console.warn("Failed to migrate customProviderBaseUrl:", error);
     } finally {
       mainStorage.delete(this.legacyCustomProviderBaseUrlKey);
     }
   }
 
   // Test mode configuration
-  private testModuleCacheExpiry = 200000;
   private testModuleCache = new Map<
     string,
-    {module: ProviderModule; cachedAt: number}
+    { module: ProviderModule; cachedAt: number }
   >();
+  private testModuleDownloads = new Map<string, Promise<ProviderModule>>();
 
   static getInstance(): ExtensionManager {
     if (!ExtensionManager.instance) {
@@ -147,22 +133,22 @@ export class ExtensionManager {
   }
 
   /**
-   * Fetch latest manifest from GitHub
+   * Fetch latest manifest from the configured provider source
    */
   async fetchManifest(
     sourceOrForce?: ProviderSource | boolean,
     force = false,
   ): Promise<ProviderExtension[]> {
     const source =
-      sourceOrForce && typeof sourceOrForce === 'object'
+      sourceOrForce && typeof sourceOrForce === "object"
         ? sourceOrForce
         : undefined;
     const shouldForce =
-      typeof sourceOrForce === 'boolean' ? sourceOrForce : force;
+      typeof sourceOrForce === "boolean" ? sourceOrForce : force;
     const activeSource = this.getActiveSource(source);
 
     if (!activeSource) {
-      throw new Error('No provider source configured');
+      throw new Error("No provider source configured");
     }
 
     try {
@@ -181,47 +167,40 @@ export class ExtensionManager {
         ? `${this.baseUrlTestMode}/manifest.json`
         : activeSource.manifestUrl || this.getManifest(activeSource.url);
       const manifestUrl = shouldForce
-        ? `${manifestBase}${manifestBase.includes('?') ? '&' : '?'}t=${Date.now()}`
+        ? `${manifestBase}${manifestBase.includes("?") ? "&" : "?"}t=${Date.now()}`
         : manifestBase;
-      console.log('Fetching manifest from:', manifestUrl);
-      const authHeaders = this.testMode
-        ? {}
-        : getSourceAuthHeaders(activeSource.author, manifestUrl);
+      console.log("Fetching manifest from:", manifestUrl);
+      if (!this.testMode) validateSourceTransport(manifestUrl);
       const response = await axios.get(manifestUrl, {
         timeout: 10000,
-        headers: shouldForce
-          ? {
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              Pragma: 'no-cache',
-              Expires: '0',
-              ...authHeaders,
-            }
-          : authHeaders,
+        adapter: platformAxiosAdapter,
+        headers: this.testMode
+          ? undefined
+          : getSourceRequestHeaders(activeSource.author, manifestUrl),
       });
 
       if (!response.data || !Array.isArray(response.data)) {
-        throw new Error('Invalid manifest format');
+        throw new Error("Invalid manifest format");
       }
 
       const providers: ProviderExtension[] = response.data
         // A path that leaves the source folder is unsafe; skip that entry.
         .filter(
           (item: any) =>
-            item?.path == null ||
-            item.path === '' ||
-            isValidProviderPath(item.path),
+            item?.path === undefined || isValidProviderPath(item.path),
         )
         .map((item: any) => ({
           value: item.value,
           display_name: item.display_name,
           disabled: item.disabled || false,
-          source: {author: activeSource.author, url: activeSource.url},
+          source: { author: activeSource.author, url: activeSource.url },
           version: item.version,
-          icon: item.icon || '',
-          type: item.type || 'global',
-          hasSettings: Boolean(item.hasSettings),
-          ...(item.path ? {path: item.path} : {}),
+          icon: item.icon || "",
+          type: item.type || "global",
           installed: false,
+          hasSettings: item.hasSettings || false,
+          ...(item.path ? { path: item.path } : {}),
+          ...(item.integrity === undefined ? {} : {integrity:parseProviderIntegrity(item.integrity)}),
         }));
 
       // Cache the manifest
@@ -230,12 +209,14 @@ export class ExtensionManager {
 
       return providers;
     } catch (error) {
-      console.error('Failed to fetch manifest:', error);
+      console.error("Failed to fetch manifest:", error);
       if (!this.testMode) {
         throwIfSourceAccessDenied(error, activeSource.author);
       }
       throwIfRateLimited(error);
+      throwIfSourceForbidden(error);
 
+      // Return cached data if available
       const cached = extensionStorage.getManifestCache(activeSource.author);
       if (cached.length > 0) {
         return cached;
@@ -254,19 +235,21 @@ export class ExtensionManager {
     providerValue: string,
     version: string,
     path?: string,
+    integrity?: ProviderIntegrity,
     cacheResult = true,
   ): Promise<ProviderModule> {
     if (this.testMode) {
       return this.downloadTestProviderModule(providerValue);
     }
     try {
-      const requiredFiles = ['posts', 'meta', 'stream', 'catalog'];
-      const optionalFiles = ['episodes', 'settings'];
+      const requiredFiles = ["posts", "meta", "stream", "catalog"];
+      const optionalFiles = ["episodes", "settings"];
       const allFiles = [...requiredFiles, ...optionalFiles];
       const filesUrl = getProviderFilesUrl(sourceUrl, providerValue, path);
+      validateSourceTransport(filesUrl);
 
       const modules: Record<string, string> = {};
-      const downloadPromises = allFiles.map(async fileName => {
+      const downloadPromises = allFiles.map(async (fileName) => {
         try {
           // Retry a stale CDN body once with a fresh cache key; never commit a partial set.
           for (let attempt = 0; attempt < 2; attempt++) {
@@ -274,31 +257,31 @@ export class ExtensionManager {
               const url = `${filesUrl}/${fileName}.js?v=${encodeURIComponent(version)}&t=${Date.now()}-${attempt}`;
               console.log(`Downloading: ${url}`);
 
-              const response = await axios.get(url, {
+              const response = await axios.get<string>(url, {
                 timeout: 15000,
-                headers: {
-                  'Cache-Control': 'no-cache, no-store, must-revalidate',
-                  Pragma: 'no-cache',
-                  Expires: '0',
-                  ...getSourceAuthHeaders(sourceAuthor, url),
-                },
+                responseType:'text', transformResponse:[value => value], maxContentLength:2_000_000,
+                adapter: platformAxiosAdapter,
+                headers: getSourceRequestHeaders(sourceAuthor, url),
               });
 
-              if (typeof response.data !== 'string' || !response.data.trim()) {
-                throw new Error(`Invalid module response: ${fileName}.js`);
+              if (typeof response.data !== 'string' || !response.data.trim()) throw new Error(`Invalid module response: ${fileName}.js`);
+              if (typeof response.data === 'string' && response.data) {
+                validateProviderModuleVersion(response.data, providerValue, version, fileName);
+                await verifyProviderModule(fileName,response.data,integrity);
+                modules[fileName] = response.data;
               }
-              validateProviderModuleVersion(response.data, providerValue, version, fileName);
-              modules[fileName] = response.data;
               break;
             } catch (error) {
               if (!(error instanceof ProviderVersionMismatchError) || attempt === 1) throw error;
             }
           }
         } catch (error) {
+          if (integrity?.[fileName as keyof ProviderIntegrity]) throw error;
           if (requiredFiles.includes(fileName)) {
             throwIfSourceAccessDenied(error, sourceAuthor);
           }
           throwIfRateLimited(error);
+          throwIfSourceForbidden(error);
           if (requiredFiles.includes(fileName)) {
             console.error(
               `Failed to download ${fileName}.js for ${providerValue}:`,
@@ -319,10 +302,10 @@ export class ExtensionManager {
       validateProviderModuleSet(modules, providerValue, version);
 
       // Verify required files were downloaded
-      const missingRequired = requiredFiles.filter(file => !modules[file]);
+      const missingRequired = requiredFiles.filter((file) => !modules[file]);
       if (missingRequired.length > 0) {
         throw new Error(
-          `Missing required files: ${missingRequired.join(', ')}`,
+          `Missing required files: ${missingRequired.join(", ")}`,
         );
       }
 
@@ -356,17 +339,19 @@ export class ExtensionManager {
   ): Promise<ProviderModule> {
     try {
       const url = `${this.baseUrlTestMode}/dist/${providerValue}/`;
-      const requiredFiles = ['posts', 'meta', 'stream', 'catalog'];
-      const optionalFiles = ['episodes', 'settings'];
+      const cacheBust = Date.now();
+      const requiredFiles = ["posts", "meta", "stream", "catalog"];
+      const optionalFiles = ["episodes", "settings"];
       const allFiles = [...requiredFiles, ...optionalFiles];
       const modules: Record<string, string> = {};
-      const downloadPromises = allFiles.map(async fileName => {
+      const downloadPromises = allFiles.map(async (fileName) => {
         try {
-          const fileUrl = `${url}${fileName}.js`;
+          const fileUrl = `${url}${fileName}.js?v=${cacheBust}`;
           console.log(`Downloading test module: ${fileUrl}`);
 
           const response = await axios.get(fileUrl, {
             timeout: 15000,
+            adapter: platformAxiosAdapter,
           });
 
           if (response.data) {
@@ -398,7 +383,7 @@ export class ExtensionManager {
 
       const providerModule: ProviderModule = {
         value: providerValue,
-        version: 'test',
+        version: "test",
         modules: {
           posts: modules.posts,
           meta: modules.meta,
@@ -438,6 +423,7 @@ export class ExtensionManager {
         provider.value,
         provider.version,
         provider.path,
+        provider.integrity,
       );
 
       // Mark as installed
@@ -476,6 +462,7 @@ export class ExtensionManager {
         provider.value,
         provider.version,
         provider.path,
+        provider.integrity,
         false,
       );
 
@@ -535,6 +522,29 @@ export class ExtensionManager {
     return extensionStorage.getProviderModules(providerValue, sourceAuthor);
   }
 
+  async getProviderModulesAsync(
+    providerValue: string,
+    sourceAuthor?: string,
+  ): Promise<ProviderModule | undefined> {
+    if (!this.testMode) {
+      return extensionStorage.getProviderModules(providerValue, sourceAuthor);
+    }
+
+    const activeDownload = this.testModuleDownloads.get(providerValue);
+    if (activeDownload) {
+      return activeDownload;
+    }
+
+    const download = this.downloadTestProviderModule(providerValue).finally(
+      () => {
+        this.testModuleDownloads.delete(providerValue);
+      },
+    );
+    this.testModuleDownloads.set(providerValue, download);
+
+    return download;
+  }
+
   /**
    * Check if provider needs update
    */
@@ -564,7 +574,7 @@ export class ExtensionManager {
       console.log(`Loaded ${available.length} available providers`);
 
       if (!source) {
-        console.log('No provider source configured yet');
+        console.log("No provider source configured yet");
         return;
       }
 
@@ -573,11 +583,11 @@ export class ExtensionManager {
         try {
           await this.fetchManifest(source, false);
         } catch (error) {
-          console.warn('Failed to refresh manifest on startup:', error);
+          console.warn("Failed to refresh manifest on startup:", error);
         }
       }
     } catch (error) {
-      console.error('Failed to initialize extension system:', error);
+      console.error("Failed to initialize extension system:", error);
     }
   }
 
@@ -586,19 +596,9 @@ export class ExtensionManager {
    */
   setTestMode(enabled: boolean): void {
     this.testMode = enabled;
-    console.log(`Test mode ${enabled ? 'enabled' : 'disabled'}`);
+    console.log(`Test mode ${enabled ? "enabled" : "disabled"}`);
   }
-  /**
-   * Check if test module cache is expired
-   */
-  private isTestModuleCacheExpired(providerValue: string): boolean {
-    const cached = this.testModuleCache.get(providerValue);
-    if (!cached) {
-      return true;
-    }
 
-    return Date.now() - cached.cachedAt > this.testModuleCacheExpiry;
-  }
   /**
    * Pre-fetch test modules to ensure they're available synchronously
    */
@@ -607,9 +607,9 @@ export class ExtensionManager {
       return;
     }
 
-    console.log('Pre-fetching test modules for:', providerValues);
+    console.log("Pre-fetching test modules for:", providerValues);
 
-    const fetchPromises = providerValues.map(async providerValue => {
+    const fetchPromises = providerValues.map(async (providerValue) => {
       try {
         const module = await this.downloadTestProviderModule(providerValue);
         this.testModuleCache.set(providerValue, {
@@ -637,14 +637,14 @@ export class ExtensionManager {
 
     // Refresh in background without blocking
     this.downloadTestProviderModule(providerValue)
-      .then(module => {
+      .then((module) => {
         this.testModuleCache.set(providerValue, {
           module,
           cachedAt: Date.now(),
         });
         console.log(`Background refreshed test module for: ${providerValue}`);
       })
-      .catch(error => {
+      .catch((error) => {
         console.error(
           `Failed to background refresh test module for ${providerValue}:`,
           error,

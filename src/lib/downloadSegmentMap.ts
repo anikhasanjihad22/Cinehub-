@@ -1,4 +1,4 @@
-/** A byte range still downloading, as the native downloader reports it. */
+/** A byte range still downloading, as the download manager reports it. */
 export interface DownloadRange {
   start: number;
   /** Exclusive. */
@@ -25,11 +25,9 @@ export const buildSegmentCells = (
   ranges: DownloadRange[],
   cellCount: number,
 ): SegmentCell[] => {
-  if (totalBytes <= 0 || cellCount <= 0) {
-    return [];
-  }
+  if (totalBytes <= 0 || cellCount <= 0) return [];
   const cellSize = totalBytes / cellCount;
-  return Array.from({length: cellCount}, (_, index) => {
+  return Array.from({ length: cellCount }, (_, index) => {
     const cellStart = index * cellSize;
     const cellEnd = cellStart + cellSize;
     let missing = 0;
@@ -37,31 +35,31 @@ export const buildSegmentCells = (
     for (const range of ranges) {
       const overlap =
         Math.min(range.end, cellEnd) - Math.max(range.start, cellStart);
-      if (overlap > 0) {
-        missing += overlap;
-      }
+      if (overlap > 0) missing += overlap;
       if (range.active && range.start >= cellStart && range.start < cellEnd) {
         active = true;
       }
     }
-    return {fill: Math.max(0, Math.min(1, 1 - missing / cellSize)), active};
+    return { fill: Math.max(0, Math.min(1, 1 - missing / cellSize)), active };
   });
 };
 
-/** Parses the native `details.ranges` entries: [start, end, speed, active]. */
+/** Parses the backend `details.ranges` entries: [start, end, speed, active]. */
 export const parseDownloadRanges = (value: unknown): DownloadRange[] =>
   Array.isArray(value)
     ? value
         .filter(
-          (entry): entry is number[] =>
+          (entry): entry is [number, number, number, boolean] =>
             Array.isArray(entry) &&
             entry.length >= 4 &&
-            entry.every(part => typeof part === 'number'),
+            typeof entry[0] === "number" &&
+            typeof entry[1] === "number" &&
+            typeof entry[2] === "number",
         )
         .map(([start, end, speed, active]) => ({
           start,
           end,
           speed,
-          active: active === 1,
+          active: Boolean(active),
         }))
     : [];

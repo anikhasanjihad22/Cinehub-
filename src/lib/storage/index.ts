@@ -1,27 +1,22 @@
 // Export StorageService
-export {
-  StorageService,
-  mainStorage,
-  cacheStorage,
-  clearAllMMKVStorage,
-  createZustandStorage,
-} from './StorageService';
+export {StorageService, mainStorage, cacheStorage} from './StorageService';
 
 // Export SettingsStorage
 export {
   SettingsStorage,
   settingsStorage,
-  BUFFER_LIMITS,
   MAX_DOWNLOAD_CONNECTIONS,
   MIN_DOWNLOAD_CONNECTIONS,
-  SEEK_INTERVAL_OPTIONS,
-  PLAYBACK_SPEEDS,
-  PLAYBACK_SPEED_MIN,
-  PLAYBACK_SPEED_MAX,
-  PLAYBACK_SPEED_STEP,
-  PLAYER_RESIZE_MODES,
 } from './SettingsStorage';
-export type {SettingsKeys, PlayerResizeMode} from './SettingsStorage';
+export type {SettingsKeys} from './SettingsStorage';
+
+// Export WatchHistoryStorage
+export {WatchHistoryStorage, watchHistoryStorage} from './WatchHistoryStorage';
+export type {
+  WatchHistoryKeys,
+  WatchHistoryItem,
+  SeriesEpisode,
+} from './WatchHistoryStorage';
 
 // Export WatchListStorage
 export {
@@ -43,10 +38,6 @@ export {CacheStorage, cacheStorageService} from './CacheStorage';
 // Export ProvidersStorage
 export {ProvidersStorage, providersStorage} from './ProvidersStorage';
 export type {ProvidersKeys} from './ProvidersStorage';
-
-// Export DownloadsStorage
-export {DownloadsStorage, downloadsStorage} from './DownloadsStorage';
-export type {DownloadsKeys, DownloadPayload} from './DownloadsStorage';
 
 // Export ExtensionStorage
 export {ExtensionStorage, extensionStorage} from './extensionStorage';

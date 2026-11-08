@@ -1,9 +1,8 @@
-import axios from 'axios';
-import Constants from 'expo-constants';
-import {useQuery} from '@tanstack/react-query';
-import {settingsStorage} from '../storage';
+import { useQuery } from "@tanstack/react-query";
+import axios from "axios";
+import { settingsStorage } from "../storage";
 
-export type TmdbMediaType = 'movie' | 'tv';
+export type TmdbMediaType = "movie" | "tv";
 
 export interface TmdbStoryCastMember {
   id: number | string;
@@ -17,14 +16,6 @@ export interface TmdbStoryCollectionItem {
   title: string;
   subtitle?: string;
   imagePath?: string;
-}
-
-export interface StoryVideo {
-  id: string;
-  name?: string;
-  url?: string;
-  thumbnail?: string;
-  youtubeKey?: string;
 }
 
 export interface RatingHistogramEntry {
@@ -41,12 +32,20 @@ export interface FeaturedReview {
 }
 
 export interface RelatedTitle {
-  id: string;
+  id: string | number;
   title: string;
   image?: string;
   rating?: number;
   voteCount?: number;
-  mediaType: TmdbMediaType;
+  mediaType?: TmdbMediaType;
+}
+
+export interface StoryVideo {
+  id: string | number;
+  name?: string;
+  url?: string;
+  thumbnail?: string;
+  youtubeKey?: string;
 }
 
 export interface TmdbStoryData {
@@ -55,7 +54,6 @@ export interface TmdbStoryData {
   title: string;
   tagline?: string;
   overview?: string;
-  backdropPath?: string;
   backdropPaths: string[];
   posterPath?: string;
   trailerKey?: string;
@@ -104,46 +102,28 @@ interface UseTmdbStoryOptions {
   type?: string;
 }
 
-interface TmdbFindResult {
-  id: number;
-}
+const TMDB_API_URL = "https://api.themoviedb.org/3";
+export const getProxyApiUrl = () =>
+  String(import.meta.env.VITE_PROXY_API_URL || import.meta.env.VITE_META_PROXY_URL || "").trim();
 
-const TMDB_API_URL = 'https://api.themoviedb.org/3';
+export const getTmdbApiKey = () =>
+  settingsStorage.getTmdbApiKey() || String(import.meta.env.VITE_TMDB_API_KEY || "").trim();
 
-export const getProxyApiUrl = (): string =>
-  String(
-    Constants.expoConfig?.extra?.proxyApiUrl ||
-      process.env.EXPO_PUBLIC_PROXY_API_URL ||
-      '',
-  ).trim();
+const preferredType = (type?: string): TmdbMediaType =>
+  type?.toLowerCase() === "series" || type?.toLowerCase() === "tv" ? "tv" : "movie";
 
-export const getTmdbApiKey = (): string =>
-  settingsStorage.getTmdbApiKey() ||
-  String(Constants.expoConfig?.extra?.tmdbApiKey || '').trim();
-
-const getPreferredMediaType = (type?: string): TmdbMediaType =>
-  type?.toLowerCase() === 'series' || type?.toLowerCase() === 'tv'
-    ? 'tv'
-    : 'movie';
-
-const getImagePath = (path?: string | null): string | undefined =>
-  path ? (path.startsWith('http') ? path : `https://image.tmdb.org/t/p/w780${path}`) : undefined;
-
-const getMovieCertification = (details: any): string | undefined => {
+const certification = (details: any, mediaType: TmdbMediaType) => {
+  if (mediaType === "tv") {
+    const ratings = details.content_ratings?.results ?? [];
+    return (ratings.find((item: any) => item.iso_3166_1 === "US") ?? ratings[0])?.rating?.trim();
+  }
   const releases = details.release_dates?.results ?? [];
-  const country =
-    releases.find((item: any) => item.iso_3166_1 === 'US') ?? releases[0];
-  return country?.release_dates
-    ?.find((item: any) => item.certification)
-    ?.certification?.trim();
+  const country = releases.find((item: any) => item.iso_3166_1 === "US") ?? releases[0];
+  return country?.release_dates?.find((item: any) => item.certification)?.certification?.trim();
 };
 
-const getTvCertification = (details: any): string | undefined => {
-  const ratings = details.content_ratings?.results ?? [];
-  const country =
-    ratings.find((item: any) => item.iso_3166_1 === 'US') ?? ratings[0];
-  return country?.rating?.trim();
-};
+const imageUrl = (path?: string) =>
+  path ? `https://image.tmdb.org/t/p/w780${path}` : undefined;
 
 function parseProxyResponse(json: any): TmdbStoryData | null {
   if (!json?.success) return null;
@@ -152,14 +132,14 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
   const aboveTheFold = raw?.aboveTheFoldData;
   const mainColumn = raw?.mainColumnData;
 
-  const isTv = json.type === 'tvSeries' || json.type === 'tvMiniSeries' || json.isSeries === true;
-  const mediaType: TmdbMediaType = isTv ? 'tv' : 'movie';
+  const isTv = json.type === "tvSeries" || json.type === "tvMiniSeries" || json.isSeries === true;
+  const mediaType: TmdbMediaType = isTv ? "tv" : "movie";
 
   const primaryVideos = (aboveTheFold?.primaryVideos?.edges?.map((e: any) => e.node) ?? aboveTheFold?.primaryVideos ?? []) as any[];
   const trailersList: StoryVideo[] = [];
   primaryVideos.forEach((v: any, index: number) => {
     const playUrl = v.playbackURLs?.find((p: any) =>
-      p.url?.endsWith('.mp4') || p.mimeType?.includes('mp4') || p.videoMimeType?.includes('mp4')
+      p.url?.endsWith(".mp4") || p.mimeType?.includes("mp4") || p.videoMimeType?.includes("mp4")
     )?.url ?? v.playbackURLs?.[0]?.url;
     if (playUrl) {
       trailersList.push({
@@ -173,12 +153,12 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
 
   const trailer = aboveTheFold?.primaryVideos?.edges?.[0]?.node ?? aboveTheFold?.primaryVideos?.[0];
   const trailerPlayback = trailer?.playbackURLs?.find((p: any) =>
-    p.url?.endsWith('.mp4') || p.mimeType?.includes('mp4') || p.videoMimeType?.includes('mp4')
+    p.url?.endsWith(".mp4") || p.mimeType?.includes("mp4") || p.videoMimeType?.includes("mp4")
   ) ?? trailer?.playbackURLs?.[0];
 
   if (trailersList.length === 0 && (trailerPlayback?.url || trailer?.name?.value)) {
     trailersList.push({
-      id: 'primary-trailer',
+      id: "primary-trailer",
       name: trailer?.name?.value,
       url: trailerPlayback?.url,
       thumbnail: trailer?.thumbnail?.url,
@@ -231,7 +211,7 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
 
   const principalCredits = mainColumn?.principalCredits ?? [];
   const creatorGroup = principalCredits.find((c: any) =>
-    ['creator', 'director', 'writer'].includes(c.category?.id)
+    ["creator", "director", "writer"].includes(c.category?.id)
   );
   const creatorsFromPrincipal = (creatorGroup?.credits ?? [])
     .map((c: any) => c.name?.nameText || c.name?.name)
@@ -262,7 +242,7 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
   let upcomingSeason: string | undefined;
 
   if (isTv) {
-    if (json.type === 'tvMiniSeries') {
+    if (json.type === "tvMiniSeries") {
       totalSeasons = 1;
     } else if (spotlightSeason && spotlightSeason > 0 && spotlightSeason <= totalRawSeasons) {
       totalSeasons = spotlightSeason;
@@ -289,7 +269,7 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
     if (awards.wins) parts.push(`${awards.wins} wins`);
     if (awards.nominations) parts.push(`${awards.nominations} nominations`);
     if (awards.award?.text) parts.push(awards.award.text);
-    awardsText = parts.join(' · ') || undefined;
+    awardsText = parts.join(" · ") || undefined;
   }
 
   const collectionItems: TmdbStoryCollectionItem[] = [];
@@ -297,7 +277,7 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
   return {
     id: json.id,
     mediaType,
-    title: json.title || json.originalTitle || '',
+    title: json.title || json.originalTitle || "",
     tagline: undefined,
     overview: json.plot || undefined,
     backdropPaths: (mainColumn?.titleMainImages ?? [])
@@ -313,7 +293,7 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
     runtime: json.runtimeSeconds ? Math.round(json.runtimeSeconds / 60) : undefined,
     genres: json.genres ?? [],
     rating:
-      typeof json.rating === 'number'
+      typeof json.rating === "number"
         ? json.rating
         : json.rating
           ? parseFloat(String(json.rating)) || undefined
@@ -331,7 +311,7 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
     countries: [],
     networks: [],
     keywords: json.keywords ?? [],
-    collectionTitle: isTv ? 'Seasons' : undefined,
+    collectionTitle: isTv ? "Seasons" : undefined,
     collectionItems,
     metascore: json.metascore || undefined,
     productionBudget: mainColumn?.productionBudget?.budget?.amount || undefined,
@@ -346,7 +326,7 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
       ? json.raw.mainColumnData.moreLikeThisTitles.map((t: any) => {
           const rawRating = t.ratingsSummary?.aggregateRating;
           const parsedRating =
-            typeof rawRating === 'number'
+            typeof rawRating === "number"
               ? rawRating
               : rawRating
                 ? parseFloat(String(rawRating))
@@ -360,7 +340,7 @@ function parseProxyResponse(json: any): TmdbStoryData | null {
                 ? parsedRating
                 : undefined,
             voteCount: t.ratingsSummary?.voteCount || undefined,
-            mediaType: t.titleType?.id === 'tvSeries' ? 'tv' : 'movie',
+            mediaType: t.titleType?.id === "tvSeries" ? "tv" : "movie",
           };
         })
       : undefined,
@@ -384,155 +364,110 @@ async function fetchProxyStory(imdbId: string, signal?: AbortSignal): Promise<Tm
     });
     return parseProxyResponse(response.data);
   } catch (e) {
-    console.warn('[Story] Proxy API failed, will try TMDB fallback:', e);
+    console.warn("[Story] Proxy API failed, will try TMDB fallback:", e);
     return null;
   }
 }
 
-const resolveTmdbIdentity = async ({
-  apiKey,
-  imdbId,
-  preferredType,
-  signal,
-  tmdbId,
-}: {
+async function resolveIdentity({ apiKey, imdbId, tmdbId, type, signal }: {
   apiKey: string;
   imdbId?: string;
-  preferredType: TmdbMediaType;
-  signal?: AbortSignal;
   tmdbId?: number | string;
-}): Promise<{id: number; mediaType: TmdbMediaType}> => {
+  type?: string;
+  signal?: AbortSignal;
+}) {
+  const mediaType = preferredType(type);
   const directId = Number(tmdbId);
-  if (Number.isFinite(directId) && directId > 0) {
-    return {id: directId, mediaType: preferredType};
-  }
+  if (Number.isFinite(directId) && directId > 0) return { id: directId, mediaType };
+  if (!imdbId) throw new Error("No TMDB or IMDb identifier is available");
 
-  if (!imdbId) {
-    throw new Error('No TMDB or IMDb identifier is available');
-  }
-
-  const response = await axios.get(`${TMDB_API_URL}/find/${imdbId}`, {
-    params: {
-      api_key: apiKey,
-      external_source: 'imdb_id',
-      language: 'en-US',
-    },
+  const response = await axios.get(`${TMDB_API_URL}/find/${encodeURIComponent(imdbId)}`, {
+    params: { api_key: apiKey, external_source: "imdb_id", language: "en-US" },
     signal,
     timeout: 10000,
   });
-  const preferredResults: TmdbFindResult[] =
-    preferredType === 'tv'
-      ? (response.data?.tv_results ?? [])
-      : (response.data?.movie_results ?? []);
-  const fallbackResults: TmdbFindResult[] =
-    preferredType === 'tv'
-      ? (response.data?.movie_results ?? [])
-      : (response.data?.tv_results ?? []);
-  const result = preferredResults[0] ?? fallbackResults[0];
-  if (!result?.id) {
-    throw new Error('TMDB could not match this IMDb identifier');
-  }
-  return {
-    id: result.id,
-    mediaType: preferredResults[0]
-      ? preferredType
-      : preferredType === 'tv'
-        ? 'movie'
-        : 'tv',
-  };
-};
+  const preferred = mediaType === "tv" ? response.data?.tv_results ?? [] : response.data?.movie_results ?? [];
+  const fallback = mediaType === "tv" ? response.data?.movie_results ?? [] : response.data?.tv_results ?? [];
+  const result = preferred[0] ?? fallback[0];
+  if (!result?.id) throw new Error("TMDB could not match this IMDb identifier");
+  return { id: result.id as number, mediaType: preferred[0] ? mediaType : mediaType === "tv" ? "movie" as const : "tv" as const };
+}
 
-const normalizeStoryData = ({
-  collection,
-  details,
-  mediaType,
-  trendingRank,
-}: {
-  collection?: any;
-  details: any;
-  mediaType: TmdbMediaType;
-  trendingRank?: number;
-}): TmdbStoryData => {
-  const isTv = mediaType === 'tv';
-  const creditData = isTv ? details.aggregate_credits : details.credits;
-  const cast = (creditData?.cast ?? []).slice(0, 24).map(
-    (person: any): TmdbStoryCastMember => ({
-      id: person.id,
-      name: person.name,
-      character: isTv
-        ? person.roles?.[0]?.character
-        : person.character || undefined,
-      profilePath: getImagePath(person.profile_path),
+async function fetchTmdbStory({ imdbId, signal, tmdbId, type }: Omit<UseTmdbStoryOptions, "enabled"> & { signal?: AbortSignal }): Promise<TmdbStoryData> {
+  const apiKey = getTmdbApiKey();
+  if (!apiKey) throw new Error("No TMDB API key is configured. Add one in Settings.");
+  const identity = await resolveIdentity({ apiKey, imdbId, tmdbId, type, signal });
+  const append = identity.mediaType === "tv"
+    ? "aggregate_credits,content_ratings,keywords,images,videos,reviews,recommendations"
+    : "credits,release_dates,keywords,images,videos,reviews,recommendations";
+  const response = await axios.get(`${TMDB_API_URL}/${identity.mediaType}/${identity.id}`, {
+    params: {
+      api_key: apiKey,
+      append_to_response: append,
+      include_image_language: "en,null",
+      language: "en-US",
+    },
+    signal,
+    timeout: 12000,
+  });
+  const details = response.data;
+  const [trendingResult, collectionResult] = await Promise.allSettled([
+    axios.get(`${TMDB_API_URL}/trending/${identity.mediaType}/week`, {
+      params: { api_key: apiKey, language: "en-US" }, signal, timeout: 10000,
     }),
-  );
+    details.belongs_to_collection?.id
+      ? axios.get(`${TMDB_API_URL}/collection/${details.belongs_to_collection.id}`, {
+          params: { api_key: apiKey, language: "en-US" }, signal, timeout: 10000,
+        })
+      : Promise.resolve(undefined),
+  ]);
+
+  const isTv = identity.mediaType === "tv";
+  const creditData = isTv ? details.aggregate_credits : details.credits;
+  const videos = (details.videos?.results ?? []).filter((video: any) => video.site === "YouTube" && video.key);
+  const trailerVideo = videos.find((video: any) => video.type === "Trailer" && video.official)
+    ?? videos.find((video: any) => video.type === "Trailer")
+    ?? videos.find((video: any) => video.type === "Teaser")
+    ?? videos[0];
+  const collection = collectionResult.status === "fulfilled" ? collectionResult.value?.data : undefined;
+  const trending = trendingResult.status === "fulfilled" ? trendingResult.value.data?.results ?? [] : [];
+  const rank = trending.findIndex((item: any) => item.id === details.id);
+  const keywordItems = isTv ? details.keywords?.results ?? [] : details.keywords?.keywords ?? [];
   const crew = creditData?.crew ?? [];
-  const directors = isTv
+  const creators = isTv
     ? (details.created_by ?? []).map((person: any) => person.name)
-    : crew
-        .filter((person: any) => person.job === 'Director')
-        .map((person: any) => person.name);
-  const keywordItems = isTv
-    ? (details.keywords?.results ?? [])
-    : (details.keywords?.keywords ?? []);
-  const collectionItems: TmdbStoryCollectionItem[] = isTv
-    ? []
-    : (collection?.parts ?? []).map((movie: any) => ({
-        id: movie.id,
-        title: movie.title,
-        subtitle: movie.release_date?.slice(0, 4),
-        imagePath: getImagePath(movie.poster_path),
-      }));
-  const backdropPaths = Array.from(
-    new Set(
-      [
-        details.backdrop_path,
-        ...(details.images?.backdrops ?? []).map(
-          (image: any) => image.file_path,
-        ),
-      ].filter(Boolean),
-    ),
-  ).slice(0, 10) as string[];
-  const youtubeVideos = (details.videos?.results ?? []).filter(
-    (video: any) => video.site === 'YouTube' && video.key,
-  );
-  const tmdbTrailers: StoryVideo[] = youtubeVideos
-    .filter((v: any) => v.type === 'Trailer' || v.type === 'Teaser' || v.type === 'Clip')
+    : crew.filter((person: any) => person.job === "Director").map((person: any) => person.name);
+
+  const tmdbReviews = details.reviews?.results ?? [];
+  const review = tmdbReviews[0];
+  const featuredReview = review ? {
+    author: review.author || review.author_details?.username || undefined,
+    summary: undefined,
+    text: review.content || undefined,
+    rating: review.author_details?.rating || undefined,
+    date: review.created_at || undefined,
+  } : undefined;
+
+  const tmdbTrailers: StoryVideo[] = (details.videos?.results ?? [])
+    .filter((v: any) => v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser" || v.type === "Clip"))
     .map((v: any) => ({
       id: v.id || v.key,
       name: v.name,
       youtubeKey: v.key,
     }));
-  const trailer =
-    youtubeVideos.find(
-      (video: any) => video.type === 'Trailer' && video.official,
-    ) ??
-    youtubeVideos.find((video: any) => video.type === 'Trailer') ??
-    youtubeVideos.find((video: any) => video.type === 'Teaser') ??
-    youtubeVideos[0];
-
-  const tmdbReviews = details.reviews?.results ?? [];
-  const review = tmdbReviews[0];
-  const featuredReview = review
-    ? {
-        author: review.author || review.author_details?.username || undefined,
-        summary: undefined,
-        text: review.content || undefined,
-        rating: review.author_details?.rating || undefined,
-        date: review.created_at || undefined,
-      }
-    : undefined;
 
   return {
     id: details.id,
-    mediaType,
-    title: isTv ? (details.name || '') : (details.title || ''),
+    mediaType: identity.mediaType,
+    title: details.title || details.name || "",
     tagline: details.tagline || undefined,
     overview: details.overview || undefined,
-    backdropPath: getImagePath(details.backdrop_path),
-    backdropPaths,
-    posterPath: getImagePath(details.poster_path),
-    trailerKey: trailer?.key,
-    trailerName: trailer?.name,
+    backdropPaths: (details.images?.backdrops ?? []).slice(0, 8).map((item: any) => item.file_path).filter(Boolean),
+    posterPath: imageUrl(details.poster_path) || undefined,
+    trailerKey: trailerVideo?.key || tmdbTrailers[0]?.youtubeKey || undefined,
+    trailerName: trailerVideo?.name || tmdbTrailers[0]?.name || undefined,
+    trailerUrl: undefined,
+    trailerThumbnail: undefined,
     trailers: tmdbTrailers,
     releaseDate: isTv ? details.first_air_date : details.release_date,
     runtime: isTv ? details.episode_run_time?.[0] : details.runtime,
@@ -540,157 +475,79 @@ const normalizeStoryData = ({
     rating: details.vote_average || undefined,
     voteCount: details.vote_count || undefined,
     popularity: details.popularity || undefined,
-    trendingRank,
-    certification: isTv
-      ? getTvCertification(details)
-      : getMovieCertification(details),
+    trendingRank: rank >= 0 ? rank + 1 : undefined,
+    certification: certification(details, identity.mediaType),
     status: details.status || undefined,
     originalLanguage: details.original_language?.toUpperCase(),
-    cast,
-    creators: Array.from(new Set(directors)).slice(0, 5) as string[],
-    companies: (details.production_companies ?? [])
-      .map((company: any) => company.name)
-      .slice(0, 6),
-    countries: (details.production_countries ?? [])
-      .map((country: any) => country.name)
-      .slice(0, 5),
-    networks: (details.networks ?? [])
-      .map((network: any) => network.name)
-      .slice(0, 5),
-    keywords: keywordItems.map((item: any) => item.name).slice(0, 10),
-    collectionTitle:
-      collection?.name || details.belongs_to_collection?.name || undefined,
-    collectionItems,
     featuredReview,
-    totalSeasons: details.number_of_seasons || (details.seasons ? details.seasons.filter((s: any) => s.season_number > 0).length : undefined),
-    totalEpisodes: details.number_of_episodes,
+    cast: (creditData?.cast ?? []).slice(0, 16).map((person: any) => ({
+      id: person.id,
+      name: person.name,
+      character: isTv ? person.roles?.[0]?.character : person.character || undefined,
+      profilePath: person.profile_path || undefined,
+    })),
+    creators: Array.from(new Set(creators)).slice(0, 5) as string[],
+    companies: (details.production_companies ?? []).map((item: any) => item.name).slice(0, 6),
+    countries: (details.production_countries ?? []).map((item: any) => item.name).slice(0, 5),
+    networks: (details.networks ?? []).map((item: any) => item.name).slice(0, 5),
+    keywords: keywordItems.map((item: any) => item.name).slice(0, 10),
+    relatedTitles: (details.recommendations?.results ?? []).map((t: any) => ({
+      id: t.id,
+      title: t.name || t.title,
+      image: t.poster_path ? `https://image.tmdb.org/t/p/w500${t.poster_path}` : undefined,
+      rating: t.vote_average || undefined,
+      voteCount: t.vote_count || undefined,
+      mediaType: t.media_type || (t.name ? "tv" : "movie"),
+    })),
+    collectionTitle: collection?.name || details.belongs_to_collection?.name || undefined,
+    collectionItems: isTv
+      ? (details.seasons ?? []).filter((season: any) => season.season_number > 0).map((season: any) => ({
+          id: season.id,
+          title: season.name,
+          subtitle: season.episode_count != null ? `${season.episode_count} episodes` : undefined,
+          imagePath: season.poster_path || undefined,
+        }))
+      : (collection?.parts ?? []).map((movie: any) => ({
+          id: movie.id,
+          title: movie.title,
+          subtitle: movie.release_date?.slice(0, 4),
+          imagePath: movie.poster_path || undefined,
+        })),
   };
-};
+}
 
-const fetchTmdbStory = async ({
-  imdbId,
-  signal,
-  tmdbId,
-  type,
-}: Omit<UseTmdbStoryOptions, 'enabled'> & {
-  signal?: AbortSignal;
-}): Promise<TmdbStoryData> => {
-  const apiKey = getTmdbApiKey();
-  if (!apiKey) {
-    throw new Error('No TMDB API key is configured');
-  }
-
-  const identity = await resolveTmdbIdentity({
-    apiKey,
-    imdbId,
-    preferredType: getPreferredMediaType(type),
-    signal,
-    tmdbId,
-  });
-  const appendToResponse =
-    identity.mediaType === 'tv'
-      ? 'aggregate_credits,content_ratings,keywords,external_ids,images,videos,reviews'
-      : 'credits,release_dates,keywords,external_ids,images,videos,reviews';
-  const detailsResponse = await axios.get(
-    `${TMDB_API_URL}/${identity.mediaType}/${identity.id}`,
-    {
-      params: {
-        api_key: apiKey,
-        append_to_response: appendToResponse,
-        include_image_language: 'en,null',
-        language: 'en-US',
-      },
-      signal,
-      timeout: 12000,
-    },
-  );
-  const details = detailsResponse.data;
-  const [trendingResult, collectionResult] = await Promise.allSettled([
-    axios.get(`${TMDB_API_URL}/trending/${identity.mediaType}/week`, {
-      params: {api_key: apiKey, language: 'en-US'},
-      signal,
-      timeout: 10000,
-    }),
-    details.belongs_to_collection?.id
-      ? axios.get(
-          `${TMDB_API_URL}/collection/${details.belongs_to_collection.id}`,
-          {
-            params: {api_key: apiKey, language: 'en-US'},
-            signal,
-            timeout: 10000,
-          },
-        )
-      : Promise.resolve(undefined),
-  ]);
-  const trending =
-    trendingResult.status === 'fulfilled'
-      ? (trendingResult.value.data?.results ?? [])
-      : [];
-  const trendingIndex = trending.findIndex(
-    (item: any) => item.id === details.id,
-  );
-  const collection =
-    collectionResult.status === 'fulfilled'
-      ? collectionResult.value?.data
-      : undefined;
-
-  return normalizeStoryData({
-    collection,
-    details,
-    mediaType: identity.mediaType,
-    trendingRank: trendingIndex >= 0 ? trendingIndex + 1 : undefined,
-  });
-};
-
-export const fetchStoryData = async (
-  options: Omit<UseTmdbStoryOptions, 'enabled'> & { signal?: AbortSignal },
-): Promise<TmdbStoryData> => {
-  const userTmdbKey = settingsStorage.getTmdbApiKey();
-  const hasCustomTmdbKey = Boolean(userTmdbKey);
+async function fetchStoryData(options: Omit<UseTmdbStoryOptions, "enabled"> & { signal?: AbortSignal }): Promise<TmdbStoryData> {
+  const hasCustomTmdbKey = Boolean(settingsStorage.getTmdbApiKey());
   const proxyApiUrl = getProxyApiUrl();
 
-  // If user explicitly configured custom TMDB key, use TMDB directly
+  // If user has a custom TMDB key, use TMDB directly (they explicitly configured it)
   if (hasCustomTmdbKey) {
     return fetchTmdbStory(options);
   }
 
-  // If proxy API URL is present in env, try proxy API first
+  // If proxy API URL is present in env, try proxy API first (no TMDB key needed)
   if (proxyApiUrl && options.imdbId) {
     const proxyResult = await fetchProxyStory(options.imdbId, options.signal);
-    if (proxyResult) {
-      return proxyResult;
-    }
+    if (proxyResult) return proxyResult;
   }
 
-  // Fallback to TMDB if proxy is not configured in env or if proxy failed / no imdbId
-  const envKey = String(Constants.expoConfig?.extra?.tmdbApiKey || '').trim();
-  if (envKey || userTmdbKey) {
+  // Fallback to TMDB if proxy is not configured in env, or if proxy failed / no imdbId
+  const envKey = String(import.meta.env.VITE_TMDB_API_KEY || "").trim();
+  if (envKey || settingsStorage.getTmdbApiKey()) {
     return fetchTmdbStory(options);
   }
 
-  throw new Error('Could not fetch metadata. No proxy available and no TMDB API key configured.');
-};
+  throw new Error("Could not fetch metadata. No proxy available and no TMDB API key configured.");
+}
 
-export const useTmdbStory = ({
-  enabled,
-  imdbId,
-  tmdbId,
-  type,
-}: UseTmdbStoryOptions) => {
-  const apiKeyRevision = settingsStorage.getTmdbApiKeyRevision();
-
+export function useTmdbStory({ enabled, imdbId, tmdbId, type }: UseTmdbStoryOptions) {
+  const revision = settingsStorage.getTmdbApiKeyRevision();
   return useQuery({
-    queryKey: [
-      'tmdbStory',
-      tmdbId || '',
-      imdbId || '',
-      type || '',
-      apiKeyRevision,
-    ],
-    queryFn: ({signal}) => fetchStoryData({imdbId, signal, tmdbId, type}),
+    queryKey: ["tmdbStory", tmdbId || "", imdbId || "", type || "", revision],
+    queryFn: ({ signal }) => fetchStoryData({ imdbId, signal, tmdbId, type }),
     enabled: enabled && Boolean(tmdbId || imdbId),
     staleTime: 24 * 60 * 60 * 1000,
     gcTime: 48 * 60 * 60 * 1000,
     retry: 1,
   });
-};
+}

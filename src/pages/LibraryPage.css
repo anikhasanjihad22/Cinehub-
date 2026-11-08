@@ -1,0 +1,125 @@
+.library-page {
+  min-height: 100%;
+  padding: 12px clamp(16px, 3vw, 44px) 48px;
+  color: var(--on-surface);
+}
+
+.library-action-button {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--rounded-DEFAULT);
+  color: var(--on-surface);
+  background: var(--surface-container-high);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+
+.library-action-button:hover {
+  background: var(--surface-container-highest);
+}
+
+.library-action-button.primary {
+  border-color: transparent;
+  color: var(--on-primary-container);
+  background: var(--primary-container);
+}
+
+.library-action-button.primary:hover {
+  filter: brightness(1.08);
+}
+
+.library-action-button.tv-focus {
+  border-radius: var(--rounded-DEFAULT);
+}
+
+.library-chips {
+  display: flex;
+  gap: 8px;
+  margin: 0 -4px 24px;
+  padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.library-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.library-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--rounded-full);
+  color: var(--on-surface);
+  background: var(--surface-container-high);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+.library-chip:hover {
+  background: var(--surface-container-highest);
+}
+
+.library-chip.selected {
+  color: var(--background);
+  background: var(--on-surface);
+}
+
+.library-chip.tv-focus {
+  border-radius: var(--rounded-full);
+}
+
+.library-chip-name {
+  overflow: hidden;
+  max-width: 180px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-chip-count {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.65;
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 24px 16px;
+}
+
+.library-grid .post-card {
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .library-page {
+    padding-inline: 4px;
+  }
+
+  .library-header {
+    flex-wrap: wrap;
+  }
+
+  .library-header-actions {
+    width: 100%;
+  }
+
+  .library-action-button span {
+    display: none;
+  }
+
+  .library-grid {
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  }
+}
