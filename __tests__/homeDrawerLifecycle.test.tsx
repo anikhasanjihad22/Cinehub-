@@ -1,0 +1,45 @@
+import React from 'react';
+import renderer, {act} from 'react-test-renderer';
+import Home from '../src/screens/home/Home';
+
+jest.mock('@react-navigation/native', () => ({useIsFocused: () => true, useFocusEffect: jest.fn()}));
+jest.mock('../src/lib/zustand/contentStore', () => ({__esModule: true, default: (select: any) => select({provider: {value: 'test'}, installedProviders: [{}]})}));
+jest.mock('../src/lib/zustand/herostore', () => ({__esModule: true, default: (select: any) => select({setHeroes: jest.fn()})}));
+jest.mock('../src/lib/zustand/navigationPreferencesStore', () => ({__esModule: true, default: (select: any) => select({showContinueWatching: false})}));
+jest.mock('../src/lib/hooks/useHomePageData', () => ({useHomePageData: () => ({data: [], catalog: [], isLoading: false}), getRandomHeroPosts: () => [], clearHeroCache: jest.fn()}));
+jest.mock('../src/lib/hooks/useStagedHomeRows', () => ({useStagedHomeRows: (rows: any) => ({rows})}));
+jest.mock('../src/lib/storage', () => ({mainStorage: {getBool: () => false}}));
+jest.mock('../src/lib/sync/syncService', () => ({syncFromSharedFolder: jest.fn()}));
+jest.mock('../src/theme/M3PaletteContext', () => ({useM3Colors: () => ({})}));
+jest.mock('../src/lib/tv/constants', () => ({isTV: false}));
+jest.mock('react-native-drawer-layout', () => ({Drawer: 'Drawer'}));
+jest.mock('react-native-gesture-handler', () => ({GestureHandlerRootView: require('react-native').View}));
+jest.mock('@shopify/flash-list', () => ({FlashList: (props: any) => require('react').createElement('List', props, props.ListHeaderComponent)}));
+jest.mock('../src/components/Hero', () => 'Hero');
+jest.mock('../src/components/Slider', () => 'Slider');
+jest.mock('../src/components/ProviderDrawer', () => 'ProviderDrawer');
+jest.mock('../src/components/ContinueWatching', () => 'ContinueWatching');
+jest.mock('../src/components/ui/StatusBarScrim', () => 'Scrim');
+jest.mock('../src/components/ui/Text', () => require('react-native').Text);
+jest.mock('../src/components/Touturial', () => 'Tutorial');
+jest.mock('../src/components/ErrorBoundary', () => ({QueryErrorBoundary: ({children}: any) => children}));
+jest.mock('expo-status-bar', () => ({StatusBar: 'StatusBar'}));
+
+it('keeps hero controls paused through closing and enables reopening after completion', () => {
+  let tree!: renderer.ReactTestRenderer;
+  act(() => {tree = renderer.create(<Home {...({} as any)} />);});
+  const hero = () => tree.root.findByType('Hero');
+  const drawer = () => tree.root.findByType('Drawer');
+  act(() => hero().props.onOpenDrawer());
+  expect(drawer().props.open).toBe(true);
+  expect(hero().props.isDrawerOpen).toBe(true);
+  act(() => drawer().props.onClose());
+  expect(drawer().props.open).toBe(true);
+  expect(hero().props.isDrawerOpen).toBe(true);
+  act(() => drawer().props.onTransitionEnd(true));
+  expect(hero().props.isDrawerOpen).toBe(false);
+  expect(drawer().props.open).toBe(false);
+  act(() => hero().props.onOpenDrawer());
+  expect(drawer().props.open).toBe(true);
+  act(() => tree.unmount());
+});

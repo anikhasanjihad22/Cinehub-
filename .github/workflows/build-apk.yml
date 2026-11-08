@@ -1,0 +1,120 @@
+name: Build CineHub APK
+
+# One APK that runs on phones AND Android TV.
+# Run it from: GitHub → Actions → "Build CineHub APK" → Run workflow
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: build-cinehub-apk
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CI: '1'
+      EXPO_TV: '1'
+      APP_VARIANT: tv
+      APP_BUILD_NUMBER: ${{ github.run_number }}
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk/*-rc* /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo apt-get clean
+          df -h /
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Android CMake
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sdkmanager --install 'cmake;3.22.1'; then break; fi
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep 10
+          done
+
+      # Use YOUR keystore if you saved it as repo secrets (recommended: updates
+      # install over old versions). Otherwise a one-off keystore is generated.
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          STORE="$RUNNER_TEMP/cinehub.keystore"
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$STORE"
+            SP="$KEYSTORE_PASSWORD"; KA="$KEY_ALIAS"; KP="$KEY_PASSWORD"
+            echo "Using keystore from repository secrets"
+          else
+            SP="$(openssl rand -hex 12)"; KA="cinehub"; KP="$SP"
+            keytool -genkeypair -v -keystore "$STORE" -storepass "$SP" -keypass "$KP" \
+              -alias "$KA" -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=CineHub, OU=CineHub, O=CineHub, C=US"
+            echo "::warning::No keystore secrets found - generated a temporary key. Updates will NOT install over older builds. See README."
+          fi
+          echo "::add-mask::$SP"
+          echo "MYAPP_UPLOAD_STORE_FILE=$STORE" >> "$GITHUB_ENV"
+          echo "MYAPP_UPLOAD_STORE_PASSWORD=$SP" >> "$GITHUB_ENV"
+          echo "MYAPP_UPLOAD_KEY_ALIAS=$KA" >> "$GITHUB_ENV"
+          echo "MYAPP_UPLOAD_KEY_PASSWORD=$KP" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+
+      - name: Generate native Android project
+        run: npm run build:sandbox && npx expo prebuild --platform android --clean --no-install
+
+      - name: Build release APK
+        run: |
+          set -euo pipefail
+          chmod +x android/gradlew
+          cd android
+          ./gradlew :app:assembleRelease --build-cache --no-daemon --max-workers=2 --console=plain --stacktrace \
+            '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -XX:+UseSerialGC' \
+            -Pkotlin.compiler.execution.strategy=in-process -PreactNativeArchitectures=arm64-v8a
+
+      - name: Collect APK
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          node scripts/collect-action-build.cjs apk "$GITHUB_WORKSPACE/dist/CineHub.apk"
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CineHub-apk
+          path: dist/CineHub.apk
+          retention-days: 30
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: CineHub build ${{ github.run_number }}
+          files: dist/CineHub.apk

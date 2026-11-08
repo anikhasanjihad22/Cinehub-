@@ -1,0 +1,196 @@
+import com.android.build.api.instrumentation.AsmClassVisitorFactory
+import com.android.build.api.instrumentation.ClassContext
+import com.android.build.api.instrumentation.ClassData
+import com.android.build.api.instrumentation.FramesComputationMode
+import com.android.build.api.instrumentation.InstrumentationParameters
+import com.android.build.api.instrumentation.InstrumentationScope
+import groovy.transform.CompileStatic
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.objectweb.asm.ClassVisitor
+import org.objectweb.asm.Label
+import org.objectweb.asm.MethodVisitor
+import org.objectweb.asm.Opcodes
+
+// React Android is a Maven AAR. patch-package edits to ReactAndroid Kotlin do
+// not affect it. AGP instrumentation changes the dependency before D8/R8, for
+// both phone and TV variants, without rebuilding React Native's C++ libraries.
+interface CineHubScrollParameters extends InstrumentationParameters {
+    @Input Property<Boolean> getAccessibilityGuardEnabled()
+    @Input Property<Boolean> getTraceEnabled()
+}
+
+@CompileStatic
+class CineHubScrollClassVisitor extends ClassVisitor {
+    private final boolean guardEnabled
+    private final boolean traceEnabled
+    private String ownerName
+    private boolean foundDelegateMethod = false
+    private static final String VIEW_GROUP = 'com/facebook/react/views/view/ReactViewGroup'
+    private static final String VIEW_MANAGER = 'com/facebook/react/views/view/ReactViewManager'
+
+    CineHubScrollClassVisitor(ClassVisitor next, boolean guardEnabled, boolean traceEnabled) {
+        super(Opcodes.ASM9, next)
+        this.guardEnabled = guardEnabled
+        this.traceEnabled = traceEnabled
+    }
+
+    @Override
+    void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+        ownerName = name
+        super.visit(version, access, name, signature, superName, interfaces)
+    }
+
+    @Override
+    MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+        MethodVisitor next = super.visitMethod(access, name, descriptor, signature, exceptions)
+        if (traceEnabled && ownerName == 'com/facebook/react/uimanager/ViewManager' &&
+            name == 'updateProperties' &&
+            descriptor == '(Landroid/view/View;Lcom/facebook/react/uimanager/ReactStylesDiffMap;)V') {
+            return new MethodVisitor(Opcodes.ASM9, next) {
+                @Override
+                void visitCode() {
+                    super.visitCode()
+                    // Only the manager name is recorded, never prop values/URLs.
+                    mv.visitTypeInsn(Opcodes.NEW, 'java/lang/StringBuilder')
+                    mv.visitInsn(Opcodes.DUP)
+                    mv.visitLdcInsn('CineHub:Props:')
+                    mv.visitMethodInsn(Opcodes.INVOKESPECIAL, 'java/lang/StringBuilder', '<init>', '(Ljava/lang/String;)V', false)
+                    mv.visitVarInsn(Opcodes.ALOAD, 0)
+                    mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, 'com/facebook/react/uimanager/ViewManager', 'getName', '()Ljava/lang/String;', false)
+                    mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, 'java/lang/StringBuilder', 'append', '(Ljava/lang/String;)Ljava/lang/StringBuilder;', false)
+                    mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, 'java/lang/StringBuilder', 'toString', '()Ljava/lang/String;', false)
+                    mv.visitMethodInsn(Opcodes.INVOKESTATIC, 'android/os/Trace', 'beginSection', '(Ljava/lang/String;)V', false)
+                }
+
+                @Override
+                void visitInsn(int opcode) {
+                    if (opcode == Opcodes.RETURN || opcode == Opcodes.ATHROW) endTrace(mv)
+                    super.visitInsn(opcode)
+                }
+            }
+        }
+        if (traceEnabled && ownerName == 'com/facebook/drawee/view/DraweeView' &&
+            name == 'onAttachedToWindow' && descriptor == '()V') {
+            return new MethodVisitor(Opcodes.ASM9, next) {
+                @Override
+                void visitCode() {
+                    super.visitCode()
+                    beginTrace(mv, 'CineHub:ImageAttach')
+                }
+
+                @Override
+                void visitInsn(int opcode) {
+                    if (opcode == Opcodes.RETURN || opcode == Opcodes.ATHROW) endTrace(mv)
+                    super.visitInsn(opcode)
+                }
+            }
+        }
+        if (ownerName == VIEW_MANAGER && name == 'manageFocusGuideAccessibilityDelegate') {
+            if (descriptor != '(L' + VIEW_GROUP + ';)V') {
+                throw new IllegalStateException('React Android TV accessibility method changed; review the CineHub guard')
+            }
+            foundDelegateMethod = true
+            return new MethodVisitor(Opcodes.ASM9, next) {
+                @Override
+                void visitCode() {
+                    super.visitCode()
+                    if (guardEnabled) {
+                        // Equivalent Kotlin:
+                        // if (!view.isTVFocusGuide &&
+                        //     !view.hasFocusGuideTalkbackAccessibilityDelegate()) return
+                        // Keep the original path for real guides AND existing
+                        // delegates, including views that ceased to be guides.
+                        Label original = new Label()
+                        mv.visitVarInsn(Opcodes.ALOAD, 1)
+                        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, VIEW_GROUP, 'isTVFocusGuide', '()Z', false)
+                        mv.visitJumpInsn(Opcodes.IFNE, original)
+                        mv.visitVarInsn(Opcodes.ALOAD, 1)
+                        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, VIEW_GROUP,
+                            'hasFocusGuideTalkbackAccessibilityDelegate', '()Z', false)
+                        mv.visitJumpInsn(Opcodes.IFNE, original)
+                        mv.visitInsn(Opcodes.RETURN)
+                        mv.visitLabel(original)
+                    }
+                }
+
+                @Override
+                void visitMethodInsn(int opcode, String owner, String method, String desc, boolean isInterface) {
+                    boolean query = traceEnabled && owner == 'android/view/accessibility/AccessibilityManager' &&
+                        method == 'getEnabledAccessibilityServiceList'
+                    if (query) beginTrace(mv, 'CineHub:TVAccessibilityQuery')
+                    super.visitMethodInsn(opcode, owner, method, desc, isInterface)
+                    if (query) endTrace(mv)
+                }
+            }
+        }
+        if (traceEnabled && name == 'onScrollChanged' && descriptor == '(IIII)V') {
+            return new MethodVisitor(Opcodes.ASM9, next) {
+                @Override
+                void visitMethodInsn(int opcode, String owner, String method, String desc, boolean isInterface) {
+                    String label = null
+                    if (method == 'onScrollChanged' && owner.startsWith('android/widget/')) {
+                        label = 'CineHub:ScrollPlatform'
+                    } else if (method == 'updateClippingRect') {
+                        label = 'CineHub:ScrollClipping'
+                    } else if (method == 'updateStateOnScrollChanged') {
+                        label = 'CineHub:ScrollFabricState'
+                    } else if (owner.endsWith('/VirtualViewContainerState') && method == 'updateState') {
+                        label = 'CineHub:ScrollVirtualState'
+                    }
+                    if (label != null) beginTrace(mv, label)
+                    super.visitMethodInsn(opcode, owner, method, desc, isInterface)
+                    if (label != null) endTrace(mv)
+                }
+            }
+        }
+        return next
+    }
+
+    @Override
+    void visitEnd() {
+        if (ownerName == VIEW_MANAGER && !foundDelegateMethod) {
+            throw new IllegalStateException('React Android TV accessibility method missing; review the CineHub guard')
+        }
+        super.visitEnd()
+    }
+
+    private static void beginTrace(MethodVisitor visitor, String label) {
+        visitor.visitLdcInsn(label)
+        visitor.visitMethodInsn(Opcodes.INVOKESTATIC, 'android/os/Trace', 'beginSection', '(Ljava/lang/String;)V', false)
+    }
+
+    private static void endTrace(MethodVisitor visitor) {
+        visitor.visitMethodInsn(Opcodes.INVOKESTATIC, 'android/os/Trace', 'endSection', '()V', false)
+    }
+}
+
+@CompileStatic
+abstract class CineHubScrollVisitorFactory implements AsmClassVisitorFactory<CineHubScrollParameters> {
+    @Override
+    boolean isInstrumentable(ClassData data) {
+        return data.className == 'com.facebook.react.views.view.ReactViewManager' ||
+            data.className == 'com.facebook.react.views.scroll.ReactScrollView' ||
+            data.className == 'com.facebook.react.views.scroll.ReactHorizontalScrollView' ||
+            data.className == 'com.facebook.react.uimanager.ViewManager' ||
+            data.className == 'com.facebook.drawee.view.DraweeView'
+    }
+
+    @Override
+    ClassVisitor createClassVisitor(ClassContext context, ClassVisitor next) {
+        return new CineHubScrollClassVisitor(next,
+            parameters.get().accessibilityGuardEnabled.get(), parameters.get().traceEnabled.get())
+    }
+}
+
+androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+    variant.instrumentation.transformClassesWith(CineHubScrollVisitorFactory, InstrumentationScope.ALL) { params ->
+        params.accessibilityGuardEnabled.set(
+            providers.gradleProperty('cinehubNativeAccessibilityGuard').map { it.toBoolean() }.orElse(true))
+        // Opt-in diagnostic labels are absent from normal release builds.
+        params.traceEnabled.set(
+            providers.gradleProperty('cinehubNativeScrollTracing').map { it.toBoolean() }.orElse(false))
+    }
+    variant.instrumentation.setAsmFramesComputationMode(FramesComputationMode.COMPUTE_FRAMES_FOR_INSTRUMENTED_METHODS)
+}
+

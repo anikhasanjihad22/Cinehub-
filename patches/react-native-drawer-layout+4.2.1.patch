@@ -1,0 +1,61 @@
+diff --git a/node_modules/react-native-drawer-layout/lib/module/views/Drawer.native.js b/node_modules/react-native-drawer-layout/lib/module/views/Drawer.native.js
+index 40fdcdb..6e1bac9 100644
+--- a/node_modules/react-native-drawer-layout/lib/module/views/Drawer.native.js
++++ b/node_modules/react-native-drawer-layout/lib/module/views/Drawer.native.js
+@@ -111,6 +111,7 @@ export function Drawer({
+     left: 0,
+     width: isOpen ? undefined : swipeEdgeWidth
+   }, [isRight, isOpen, swipeEdgeWidth]);
++  const animationTarget = useSharedValue(open);
+   const touchStartX = useSharedValue(0);
+   const touchX = useSharedValue(0);
+   const translationX = useSharedValue(getDrawerTranslationX(open));
+@@ -127,6 +128,8 @@ export function Drawer({
+   const toggleDrawer = React.useCallback((open, velocity) => {
+     'worklet';
+ 
++    if (velocity === undefined && animationTarget.value === open) return;
++    animationTarget.value = open;
+     const translateX = getDrawerTranslationX(open);
+     if (velocity === undefined) {
+       runOnJS(onAnimationStart)(open);
+@@ -148,7 +151,7 @@ export function Drawer({
+     } else {
+       runOnJS(onClose)();
+     }
+-  }, [getDrawerTranslationX, onAnimationEnd, onAnimationStart, onClose, onOpen, touchStartX, touchX, translationX]);
++  }, [getDrawerTranslationX, animationTarget, onAnimationEnd, onAnimationStart, onClose, onOpen, touchStartX, touchX, translationX]);
+   React.useEffect(() => toggleDrawer(open), [open, toggleDrawer]);
+   const startX = useSharedValue(0);
+   const pan = React.useMemo(() => {
+diff --git a/node_modules/react-native-drawer-layout/src/views/Drawer.native.tsx b/node_modules/react-native-drawer-layout/src/views/Drawer.native.tsx
+index a88307a..c17d04f 100644
+--- a/node_modules/react-native-drawer-layout/src/views/Drawer.native.tsx
++++ b/node_modules/react-native-drawer-layout/src/views/Drawer.native.tsx
+@@ -155,6 +155,7 @@ export function Drawer({
+     [isRight, isOpen, swipeEdgeWidth]
+   );
+ 
++  const animationTarget = useSharedValue(open);
+   const touchStartX = useSharedValue(0);
+   const touchX = useSharedValue(0);
+   const translationX = useSharedValue(getDrawerTranslationX(open));
+@@ -178,6 +179,10 @@ export function Drawer({
+     (open: boolean, velocity?: number) => {
+       'worklet';
+ 
++      // A gesture/overlay already started this spring before JS confirms open.
++      // Do not restart it without velocity on controlled-state acknowledgement.
++      if (velocity === undefined && animationTarget.value === open) return;
++      animationTarget.value = open;
+       const translateX = getDrawerTranslationX(open);
+ 
+       if (velocity === undefined) {
+@@ -209,6 +214,7 @@ export function Drawer({
+     },
+     [
+       getDrawerTranslationX,
++      animationTarget,
+       onAnimationEnd,
+       onAnimationStart,
+       onClose,

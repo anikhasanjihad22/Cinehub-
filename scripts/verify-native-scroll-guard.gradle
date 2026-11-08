@@ -1,0 +1,84 @@
+import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.Opcodes
+
+// Applied by the build hook. Executes its actual ASM visitor against JVM
+// fixtures: no Android device/SDK runtime and no copied guard implementation.
+tasks.register('verifyCineHubNativeAccessibilityGuard') {
+    group = 'verification'
+    description = 'Checks that the native guard skips ordinary views and preserves TV delegate lifecycle paths'
+    doLast {
+        String groupName = 'com/facebook/react/views/view/ReactViewGroup'
+        String managerName = 'com/facebook/react/views/view/ReactViewManager'
+        def fixture = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS)
+        fixture.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, groupName, null, 'java/lang/Object', null)
+        ['guide', 'delegate', 'queries'].each { field ->
+            fixture.visitField(Opcodes.ACC_PUBLIC, field, field == 'queries' ? 'I' : 'Z', null, null).visitEnd()
+        }
+        def constructor = fixture.visitMethod(Opcodes.ACC_PUBLIC, '<init>', '()V', null, null)
+        constructor.visitCode()
+        constructor.visitVarInsn(Opcodes.ALOAD, 0)
+        constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, 'java/lang/Object', '<init>', '()V', false)
+        constructor.visitInsn(Opcodes.RETURN)
+        constructor.visitMaxs(0, 0)
+        constructor.visitEnd()
+        [isTVFocusGuide: 'guide', hasFocusGuideTalkbackAccessibilityDelegate: 'delegate'].each { method, field ->
+            def getter = fixture.visitMethod(Opcodes.ACC_PUBLIC, method, '()Z', null, null)
+            getter.visitCode()
+            getter.visitVarInsn(Opcodes.ALOAD, 0)
+            getter.visitFieldInsn(Opcodes.GETFIELD, groupName, field, 'Z')
+            getter.visitInsn(Opcodes.IRETURN)
+            getter.visitMaxs(0, 0)
+            getter.visitEnd()
+        }
+        fixture.visitEnd()
+
+        int scenarios = 0
+        [true, false].each { enabled ->
+            def bytes = new ClassWriter(ClassWriter.COMPUTE_FRAMES | ClassWriter.COMPUTE_MAXS)
+            def visitor = new CineHubScrollClassVisitor(bytes, enabled, false)
+            visitor.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, managerName, null, 'java/lang/Object', null)
+            def ctor = visitor.visitMethod(Opcodes.ACC_PUBLIC, '<init>', '()V', null, null)
+            ctor.visitCode()
+            ctor.visitVarInsn(Opcodes.ALOAD, 0)
+            ctor.visitMethodInsn(Opcodes.INVOKESPECIAL, 'java/lang/Object', '<init>', '()V', false)
+            ctor.visitInsn(Opcodes.RETURN)
+            ctor.visitMaxs(0, 0)
+            ctor.visitEnd()
+            def body = visitor.visitMethod(Opcodes.ACC_PUBLIC, 'manageFocusGuideAccessibilityDelegate',
+                '(L' + groupName + ';)V', null, null)
+            body.visitCode()
+            // Original method's work, represented by a query counter.
+            body.visitVarInsn(Opcodes.ALOAD, 1)
+            body.visitInsn(Opcodes.DUP)
+            body.visitFieldInsn(Opcodes.GETFIELD, groupName, 'queries', 'I')
+            body.visitInsn(Opcodes.ICONST_1)
+            body.visitInsn(Opcodes.IADD)
+            body.visitFieldInsn(Opcodes.PUTFIELD, groupName, 'queries', 'I')
+            body.visitInsn(Opcodes.RETURN)
+            body.visitMaxs(0, 0)
+            body.visitEnd()
+            visitor.visitEnd()
+            def loader = new GroovyClassLoader(CineHubScrollClassVisitor.classLoader)
+            try {
+                def viewType = loader.defineClass(groupName.replace('/', '.'), fixture.toByteArray())
+                def managerType = loader.defineClass(managerName.replace('/', '.'), bytes.toByteArray())
+                def manager = managerType.getDeclaredConstructor().newInstance()
+                [false, true].each { guide ->
+                    [false, true].each { delegate ->
+                        def view = viewType.getDeclaredConstructor().newInstance()
+                        viewType.getField('guide').setBoolean(view, guide)
+                        viewType.getField('delegate').setBoolean(view, delegate)
+                        managerType.getMethod('manageFocusGuideAccessibilityDelegate', viewType).invoke(manager, view)
+                        int expected = enabled && !guide && !delegate ? 0 : 1
+                        assert viewType.getField('queries').getInt(view) == expected :
+                            "Guard=${enabled}, TV guide=${guide}, existing delegate=${delegate}"
+                        scenarios++
+                    }
+                }
+            } finally {
+                loader.close()
+            }
+        }
+        logger.lifecycle("Native accessibility guard: ${scenarios} JVM bytecode scenarios passed")
+    }
+}

@@ -1,0 +1,209 @@
+diff --git a/node_modules/react-native-image-colors/android/build.gradle b/node_modules/react-native-image-colors/android/build.gradle
+index 25d0f74..5b61474 100644
+--- a/node_modules/react-native-image-colors/android/build.gradle
++++ b/node_modules/react-native-image-colors/android/build.gradle
+@@ -55,15 +55,13 @@ android {
+   compileSdkVersion safeExtGet("compileSdkVersion", 33)
+ 
+   def agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION
+-  if (agpVersion.tokenize('.')[0].toInteger() < 8) {
+-    compileOptions {
+-      sourceCompatibility JavaVersion.VERSION_11
+-      targetCompatibility JavaVersion.VERSION_11
+-    }
++  compileOptions {
++    sourceCompatibility JavaVersion.VERSION_17
++    targetCompatibility JavaVersion.VERSION_17
++  }
+ 
+-    kotlinOptions {
+-      jvmTarget = JavaVersion.VERSION_11.majorVersion
+-    }
++  kotlinOptions {
++    jvmTarget = JavaVersion.VERSION_17.majorVersion
+   }
+ 
+   defaultConfig {
+@@ -88,6 +86,7 @@ repositories {
+ 
+ dependencies {
+   implementation project(':expo-modules-core')
++  implementation 'com.facebook.react:react-android'
+   implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:${getKotlinVersion()}"
+   implementation "androidx.palette:palette:1.0.0"
+   implementation "com.caverock:androidsvg-aar:1.4"
+diff --git a/node_modules/react-native-image-colors/android/src/main/java/com/reactnativeimagecolors/ImageColorsModule.kt b/node_modules/react-native-image-colors/android/src/main/java/com/reactnativeimagecolors/ImageColorsModule.kt
+index 302ca19..ddd1279 100644
+--- a/node_modules/react-native-image-colors/android/src/main/java/com/reactnativeimagecolors/ImageColorsModule.kt
++++ b/node_modules/react-native-image-colors/android/src/main/java/com/reactnativeimagecolors/ImageColorsModule.kt
+@@ -22,7 +22,15 @@ import kotlinx.coroutines.*
+ import kotlin.math.ceil
+ 
+ import java.net.MalformedURLException
+-import java.net.URI
++import java.io.BufferedInputStream
++import java.io.InputStream
++import com.facebook.drawee.backends.pipeline.Fresco
++import com.facebook.datasource.DataSources
++import com.facebook.common.memory.PooledByteBufferInputStream
++import com.facebook.imagepipeline.request.ImageRequest
++import com.facebook.imagepipeline.request.ImageRequestBuilder
++import com.facebook.react.bridge.Arguments
++import com.facebook.react.modules.fresco.ReactNetworkImageRequest
+ 
+ class Config : Record {
+   @Field
+@@ -33,11 +41,45 @@ class Config : Record {
+ 
+   @Field
+   val pixelSpacing: Int = 5
++
++  @Field
++  val cacheOnly: Boolean = false
+ }
+ 
+ class ImageColorsModule : Module() {
+   private val service = CoroutineScope(Dispatchers.IO)
+ 
++  private fun thumbnailOptions(bounds: BitmapFactory.Options): BitmapFactory.Options {
++    var sample = 1
++    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 128) sample *= 2
++    return BitmapFactory.Options().apply { inSampleSize = sample }
++  }
++
++  private fun shrinkThumbnail(bitmap: Bitmap?): Bitmap? {
++    if (bitmap == null || maxOf(bitmap.width, bitmap.height) <= 64) return bitmap
++    val scale = 64.0 / maxOf(bitmap.width, bitmap.height)
++    val result = Bitmap.createScaledBitmap(bitmap, maxOf(1, (bitmap.width * scale).toInt()), maxOf(1, (bitmap.height * scale).toInt()), true)
++    if (result !== bitmap) bitmap.recycle()
++    return result
++  }
++
++  private fun decodeThumbnail(decode: (BitmapFactory.Options) -> Bitmap?): Bitmap? {
++    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
++    decode(bounds)
++    return shrinkThumbnail(decode(thumbnailOptions(bounds)))
++  }
++
++  private fun decodeThumbnailStream(stream: InputStream): Bitmap? {
++    BufferedInputStream(stream).use { buffered ->
++      // A bounded rewind buffer permits one HTTP download for bounds + pixels.
++      buffered.mark(1024 * 1024)
++      val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
++      BitmapFactory.decodeStream(buffered, null, bounds)
++      buffered.reset()
++      return shrinkThumbnail(BitmapFactory.decodeStream(buffered, null, thumbnailOptions(bounds)))
++    }
++  }
++
+   /**
+    * pixelSpacing tells how many pixels to skip each pixel.
+    * If pixelSpacing > 1: the average color is an estimate, but higher values mean better performance.
+@@ -45,7 +87,7 @@ class ImageColorsModule : Module() {
+    * If pixelSpacing < 1: the method will most likely crash (don't use values below 1).
+    */
+   private fun calculateAverageColor(bitmap: Bitmap, pixelSpacing: Int): Int {
+-    val segmentWidth = 500
++    val segmentWidth = minOf(500, bitmap.width)
+ 
+     val width = bitmap.width
+     val height = bitmap.height
+@@ -117,7 +159,7 @@ class ImageColorsModule : Module() {
+ 
+           // check if local resource
+           if (context != null && resourceId != 0) {
+-            image = BitmapFactory.decodeResource(context.resources, resourceId)
++            image = decodeThumbnail { options -> BitmapFactory.decodeResource(context.resources, resourceId, options) }
+           }
+ 
+           // check if base64
+@@ -130,12 +172,14 @@ class ImageColorsModule : Module() {
+               val svg = AndroidSVG.getFromString(svgString)
+               val width = if (svg.documentWidth > 0) svg.documentWidth.toInt() else 200
+               val height = if (svg.documentHeight > 0) svg.documentHeight.toInt() else 200
+-              val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
++              val scale = minOf(1.0, 64.0 / maxOf(width, height))
++              val bitmap = Bitmap.createBitmap(maxOf(1, (width * scale).toInt()), maxOf(1, (height * scale).toInt()), Bitmap.Config.ARGB_8888)
+               val canvas = Canvas(bitmap)
++              canvas.scale(scale.toFloat(), scale.toFloat())
+               svg.renderToCanvas(canvas)
+               image = bitmap
+             } else {
+-              image = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
++              image = decodeThumbnail { options -> BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size, options) }
+             }
+           }
+ 
+@@ -143,30 +187,34 @@ class ImageColorsModule : Module() {
+           if (uri.startsWith("content")) {
+             val contentUri = Uri.parse(uri)
+             val stream = context?.contentResolver?.openInputStream(contentUri)
+-            image = BitmapFactory.decodeStream(stream)
++            image = stream?.let { decodeThumbnailStream(it) }
+             stream?.close()
+           }
+           
+           // check if local file URI or absolute path
+           if (uri.startsWith("file://") || uri.startsWith("/")) {
+             val filePath = if (uri.startsWith("file://")) Uri.parse(uri).path else uri
+-            image = BitmapFactory.decodeFile(filePath)
++            image = decodeThumbnail { options -> BitmapFactory.decodeFile(filePath, options) }
+           }
+ 
+           // check if valid URL (http/https)
+           if (uri.startsWith("http")) {
+-            val parsedUri = URI(uri)
+-            val connection = parsedUri.toURL().openConnection()
+-
+-            if (config.headers != null) {
+-              for (header in config.headers) {
+-                connection.setRequestProperty(header.key, header.value)
+-              }
+-            }
+-
+-            val stream = connection.getInputStream()
+-            image = BitmapFactory.decodeStream(stream)
+-            stream.close()
++            // Share React Native Image's Fresco pipeline: reuse disk bytes and
++            // coalesce downloads instead of opening a separate HTTP connection.
++            val builder = ImageRequestBuilder.newBuilderWithSource(Uri.parse(uri))
++            if (config.cacheOnly) builder.setLowestPermittedRequestLevel(ImageRequest.RequestLevel.DISK_CACHE)
++            val request = ReactNetworkImageRequest.fromBuilderWithHeaders(
++              builder, config.headers?.let { Arguments.makeNativeMap(it) }
++            )
++            val source = Fresco.getImagePipeline().fetchEncodedImage(request, null)
++            try {
++              val reference = DataSources.waitForFinalResult(source)
++              try {
++                if (reference != null) {
++                  image = PooledByteBufferInputStream(reference.get()).use { decodeThumbnailStream(it) }
++                }
++              } finally { reference?.close() }
++            } finally { source.close() }
+           }
+ 
+           if (image == null) {
+diff --git a/node_modules/react-native-image-colors/build/types.d.ts b/node_modules/react-native-image-colors/build/types.d.ts
+index f0e4f7f..11f6eab 100644
+--- a/node_modules/react-native-image-colors/build/types.d.ts
++++ b/node_modules/react-native-image-colors/build/types.d.ts
+@@ -54,6 +54,7 @@ export interface Config {
+     /**
+      * Enables in-memory caching of the result - skip downloading the same image next time.
+      */
++    cacheOnly?: boolean;
+     cache: boolean;
+     /**
+      * Key used for caching, it is recommended to provide it. If not provided, the image URI will be used.
+diff --git a/node_modules/react-native-image-colors/src/types.ts b/node_modules/react-native-image-colors/src/types.ts
+index 2a4c10e..009750b 100644
+--- a/node_modules/react-native-image-colors/src/types.ts
++++ b/node_modules/react-native-image-colors/src/types.ts
+@@ -57,6 +57,7 @@ export interface Config {
+   /**
+    * Enables in-memory caching of the result - skip downloading the same image next time.
+    */
++  cacheOnly?: boolean
+   cache: boolean
+   /**
+    * Key used for caching, it is recommended to provide it. If not provided, the image URI will be used.
