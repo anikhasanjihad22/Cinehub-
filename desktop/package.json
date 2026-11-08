@@ -29,7 +29,10 @@
   "build": {
     "appId": "com.cinehub.desktop",
     "productName": "CineHub",
-    "directories": {"output": "release", "buildResources": "build"},
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
     "files": [
       "src/main/**/*",
       "src/renderer/**/*",
@@ -38,13 +41,19 @@
     ],
     "win": {
       "icon": "build/icon.png",
-      "target": ["nsis", "portable"],
-      "artifactName": "CineHub-${version}-${arch}-${target}.${ext}"
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "artifactName": "CineHub-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "CineHub-Portable-${version}-${arch}.${ext}"
     }
   }
 }
