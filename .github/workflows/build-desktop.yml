@@ -57,6 +57,16 @@ jobs:
           workspaces: "./src-tauri -> target"
 
       - name: Build Tauri app
+        id: build_try1
+        continue-on-error: true
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || matrix.platform == 'windows-latest' && '--bundles nsis' || '' }}
+
+      - name: Build Tauri app (retry)
+        if: steps.build_try1.outcome == 'failure'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
