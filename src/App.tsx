@@ -26,6 +26,7 @@ import { WatchTogetherPage } from "./pages/WatchTogetherPage";
 import useAuthStore from "./lib/zustand/authStore";
 import usePartyStore, { partyParamsToPlayerState } from "./lib/watchParty/watchParty";
 import { syncServers, clearManagedServers } from "./lib/services/serverSync";
+import { toast } from "./lib/zustand/toastStore";
 import { refreshLoginPosters } from "./lib/loginPosters";
 import useThemeStore from "./lib/zustand/themeStore";
 import { settingsStorage } from "./lib/storage";
@@ -91,14 +92,42 @@ function SourceIntentHandler() {
 // Keeps this PC's servers in step with the ones the CineHub admin set up.
 function ServerSyncRunner() {
   useEffect(() => {
-    const run = () => {
-      void syncServers()
-        .then(() => refreshLoginPosters())
-        .catch((error) => console.warn("[CineHub] Server sync failed:", error));
+    let timer: number | undefined;
+    let alive = true;
+    let attempts = 0;
+    const later = (ms: number) => {
+      if (alive) timer = window.setTimeout(run, ms);
     };
-    run();
-    const id = window.setInterval(run, 15 * 60 * 1000);
-    return () => window.clearInterval(id);
+    const run = async () => {
+      try {
+        const result = await syncServers();
+        void refreshLoginPosters();
+        const ready = result.statuses.filter((s) => s.ok).length;
+        if (result.errors.length > 0 && attempts < 5) {
+          attempts += 1;
+          if (attempts === 1) {
+            toast(`${ready} of ${result.servers} servers ready. Retrying the rest…`, 4500);
+          }
+          later(30 * 1000);
+          return;
+        }
+        attempts = 0;
+      } catch (error) {
+        console.warn("[CineHub] Server sync failed:", error);
+        if (attempts < 5) {
+          attempts += 1;
+          later(30 * 1000);
+          return;
+        }
+        attempts = 0;
+      }
+      later(15 * 60 * 1000);
+    };
+    void run();
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
   }, []);
   return null;
 }

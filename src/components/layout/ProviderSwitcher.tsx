@@ -7,6 +7,7 @@ import './ProviderSwitcher.css';
 export const ProviderSwitcher: React.FC = () => {
   const { installedProviders, provider: activeProvider, setProvider } = useContentStore();
   const [isOpen, setIsOpen] = useState(false);
+  const [filter, setFilter] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -26,6 +27,7 @@ export const ProviderSwitcher: React.FC = () => {
   const handleSelect = (provider: any) => {
     setProvider(provider);
     setIsOpen(false);
+    setFilter('');
   };
 
   return (
@@ -43,10 +45,21 @@ export const ProviderSwitcher: React.FC = () => {
 
       {isOpen && (
         <div className="provider-dropdown glass-overlay">
-          {installedProviders.map(provider => (
+          {installedProviders.length > 6 && (
+            <input
+              className="provider-filter"
+              autoFocus
+              placeholder={`Search ${installedProviders.length} servers…`}
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+            />
+          )}
+          {installedProviders
+            .filter(p => !filter.trim() || p.display_name.toLowerCase().includes(filter.trim().toLowerCase()))
+            .map(provider => (
             <FocusableButton
               key={`${provider.source?.author}:${provider.value}`}
-              className={`provider-option ${activeProvider?.value === provider.value ? 'active' : ''}`}
+              className={`provider-option ${activeProvider?.value === provider.value && activeProvider?.source?.author === provider.source?.author ? 'active' : ''}`}
               onClick={() => handleSelect(provider)}
             >
               <div className="provider-option-info">
@@ -57,7 +70,7 @@ export const ProviderSwitcher: React.FC = () => {
                 )}
                 <span className="label-md truncate">{provider.display_name}</span>
               </div>
-              {activeProvider?.value === provider.value && (
+              {activeProvider?.value === provider.value && activeProvider?.source?.author === provider.source?.author && (
                 <Check size={16} className="text-primary" />
               )}
             </FocusableButton>

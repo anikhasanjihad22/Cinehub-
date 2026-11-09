@@ -36,7 +36,19 @@ const useContentStore = create<Content>()(
       availableProviders: [],
       activeExtensionProvider: null,
 
-      setProvider: (provider: ProviderExtension) => set({provider}),
+      setProvider: (provider: ProviderExtension) => {
+        // Servers can share a provider id; module lookups by id follow the
+        // default source, so make the chosen server the default one.
+        const author = provider?.source?.author;
+        if (author) {
+          try {
+            extensionStorage.setDefaultProviderSource(author);
+          } catch {
+            // source not stored (yet)
+          }
+        }
+        set({provider});
+      },
 
       setInstalledProviders: (providers: ProviderExtension[]) =>
         set({

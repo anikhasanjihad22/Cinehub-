@@ -14,6 +14,7 @@ import { PlayerSettings } from "../components/settings/PlayerSettings";
 import { SubtitleSettings } from "../components/settings/SubtitleSettings";
 import { PreferencesSettings } from "../components/settings/PreferencesSettings";
 import useAuthStore from "../lib/zustand/authStore";
+import { syncServers, clearManagedServers, useServerStatus } from "../lib/services/serverSync";
 import { checkAppUpdates } from "../lib/hooks/useAppUpdater";
 import { FocusableButton } from "../components/layout/FocusableButton";
 import { Switch } from "../components/ui/switch";
@@ -45,6 +46,8 @@ export const SettingsPage: React.FC = () => {
   const authUser = useAuthStore((state) => state.user);
   const authProfile = useAuthStore((state) => state.profile);
   const signOutNow = () => useAuthStore.getState().signOut();
+  const serverStatuses = useServerStatus((state) => state.statuses);
+  const serversSyncing = useServerStatus((state) => state.syncing);
   const [infoPageDynamicTheme, setInfoPageDynamicTheme] = React.useState(() =>
     settingsStorage.isInfoPageDynamicThemeEnabled(),
   );
@@ -119,6 +122,63 @@ export const SettingsPage: React.FC = () => {
               </div>
               <FocusableButton className="theme-toggle-btn active" onClick={() => void signOutNow()}>
                 Sign out
+              </FocusableButton>
+            </div>
+          </div>
+        </section>
+
+        {/* Servers Group */}
+        <section className="settings-group">
+          <h2 className="title-md flex items-center gap-2" style={{ marginBottom: "8px" }}>
+            <Info size={20} /> Servers
+          </h2>
+          <div className="settings-card">
+            {serverStatuses.length === 0 && (
+              <div className="settings-row">
+                <div className="settings-info">
+                  <p className="body-md text-muted">
+                    {serversSyncing ? "Loading servers…" : "No servers yet. Servers are added by the CineHub admin."}
+                  </p>
+                </div>
+              </div>
+            )}
+            {serverStatuses.map((server) => (
+              <React.Fragment key={server.id}>
+                <div className="settings-row">
+                  <div className="settings-info">
+                    <h3 className="label-lg">{server.label}</h3>
+                    <p className="body-md text-muted">
+                      {server.ok
+                        ? `${server.providers} ready${server.error ? " (using saved copy)" : ""}`
+                        : server.error || "Not available"}
+                    </p>
+                  </div>
+                </div>
+                <div className="settings-divider" />
+              </React.Fragment>
+            ))}
+            <div className="settings-row">
+              <div className="settings-info">
+                <p className="body-md text-muted">
+                  Servers refresh by themselves. Use these if one is missing.
+                </p>
+              </div>
+              <FocusableButton
+                className="theme-toggle-btn active"
+                disabled={serversSyncing}
+                onClick={() => void syncServers()}
+              >
+                {serversSyncing ? "Refreshing…" : "Refresh"}
+              </FocusableButton>
+              <FocusableButton
+                className="theme-toggle-btn active"
+                disabled={serversSyncing}
+                onClick={() => {
+                  clearManagedServers();
+                  void syncServers();
+                }}
+              >
+                Reset
               </FocusableButton>
             </div>
           </div>
