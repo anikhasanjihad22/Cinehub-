@@ -28,7 +28,7 @@ const cliPaths = [
 async function resolveMpvBaseUrl() {
   try {
     const res = await fetch(
-      "https://github.com/zhongfly/mpv-winbuild/releases/latest/download/sha256.txt",
+      "https://github.com/zhongfly/mpv-winbuild/releases/download/2026-11-07-55d3feb45c/sha256.txt",
     );
     if (res.ok) {
       const text = await res.text();
@@ -38,7 +38,7 @@ async function resolveMpvBaseUrl() {
           .split("\n")
           .some((l) => l.includes(`mpv-dev-lgpl-${mpvArch}`) && !l.includes("v3"))
       ) {
-        return "https://github.com/zhongfly/mpv-winbuild/releases/latest/download";
+        return "https://github.com/zhongfly/mpv-winbuild/releases/download/2026-11-07-55d3feb45c";
       }
     }
   } catch (e) {
@@ -63,7 +63,7 @@ async function resolveMpvBaseUrl() {
           console.log(
             `[setup-lib] Found mpv-winbuild release tag: ${rel.tag_name}`,
           );
-          return `https://github.com/zhongfly/mpv-winbuild/releases/download/${rel.tag_name}`;
+          return `https://github.com/zhongfly/mpv-winbuild/releases/download/2026-11-07-55d3feb45c`;
         }
       }
     }
@@ -71,7 +71,7 @@ async function resolveMpvBaseUrl() {
     console.warn("[setup-lib] Could not query releases API:", e.message);
   }
 
-  return "https://github.com/zhongfly/mpv-winbuild/releases/latest/download";
+  return "https://github.com/zhongfly/mpv-winbuild/releases/download/2026-11-07-55d3feb45c";
 }
 
 const hasWindowsDlls = () => {
