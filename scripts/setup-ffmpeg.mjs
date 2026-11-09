@@ -1,3 +1,4 @@
+import "./fetch-retry.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
